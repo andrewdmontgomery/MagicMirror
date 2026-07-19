@@ -15,7 +15,10 @@ let config = {
 	modules: [
 		{
 			module: "clock",
-			position: "top_left"
+			position: "top_left",
+			config: {
+				timeFormat: 12
+			}
 		},
 		{
 			module: "weather",
