@@ -20,12 +20,12 @@ let config = {
 		{
 			module: "weather",
 			position: "top_right",
-			header: "Saint Paul, MN",
+			header: "Inver Grove Heights, MN",
 			config: {
 				weatherProvider: "openmeteo",
 				type: "current",
-				lat: 44.9537,
-				lon: -93.0900,
+				lat: 44.8480,
+				lon: -93.0430,
 				units: "imperial",
 				windUnits: "imperial",
 				updateInterval: 10 * 60 * 1000,
@@ -39,8 +39,8 @@ let config = {
 			config: {
 				weatherProvider: "openmeteo",
 				type: "forecast",
-				lat: 44.9537,
-				lon: -93.0900,
+				lat: 44.8480,
+				lon: -93.0430,
 				units: "imperial",
 				maxNumberOfDays: 5
 			}
