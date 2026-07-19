@@ -1,0 +1,11 @@
+services:
+  magicmirror:
+    container_name: magicmirror
+    image: karsten13/magicmirror:latest
+    restart: unless-stopped
+    environment:
+      - MM_SCENARIO=server
+    volumes:
+      - ./mounts/config:/opt/magic_mirror/config
+    ports:
+      - "8080:8080"
