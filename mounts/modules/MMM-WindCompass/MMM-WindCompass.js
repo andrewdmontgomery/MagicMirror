@@ -15,7 +15,8 @@ Module.register("MMM-WindCompass", {
 		units: "imperial",
 		updateInterval: 10 * 60 * 1000,
 		animationSpeed: 1000,
-		locationName: ""
+		locationName: "",
+		showHeaderIcon: true
 	},
 
 	start: function () {
@@ -44,11 +45,20 @@ Module.register("MMM-WindCompass", {
 	},
 
 	getHeader: function () {
-		let label = this.data.header || "Wind";
+		let text = this.data.header || "";
 		if (this.config.locationName) {
-			label += ` ${this.config.locationName}`;
+			text = text ? `${text} ${this.config.locationName}` : this.config.locationName;
 		}
-		return `<span class="wind-header-icon">${WIND_ICON_SVG}</span><span class="wind-header-label">${label}</span>`;
+
+		const iconHtml = this.config.showHeaderIcon
+			? `<span class="wind-header-icon">${WIND_ICON_SVG}</span>`
+			: "";
+		const textHtml = text ? `<span class="wind-header-label">${text}</span>` : "";
+
+		if (!iconHtml && !textHtml) {
+			return `<span class="wind-header-label">Wind</span>`;
+		}
+		return iconHtml + textHtml;
 	},
 
 	degreesToCardinal: function (deg) {

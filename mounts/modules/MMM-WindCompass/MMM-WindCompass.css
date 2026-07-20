@@ -3,8 +3,12 @@
 }
 
 .wind-header-icon {
-	float: left;
-	margin-top: -1px;
+	display: inline-block;
+	vertical-align: middle;
+}
+
+.wind-header-icon + .wind-header-label {
+	margin-left: 8px;
 }
 
 .wind-header-icon svg {
