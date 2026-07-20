@@ -1,4 +1,5 @@
 .DS_Store
+.claude/settings.local.json
 mounts/config/config.js.bak
 mounts/config/basepath.js
 mounts/config/custom.css
