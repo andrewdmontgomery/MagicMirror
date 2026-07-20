@@ -114,9 +114,9 @@ Module.register("MMM-WindCompass", {
 	},
 
 	buildCompassSvg: function (speed, unitLabel, direction) {
-		const ringRadius = 75;
-		const discRadius = 40;
-		const tickLength = 10;
+		const ringRadius = 52;
+		const discRadius = 28;
+		const tickLength = 7;
 		const canvasMargin = 7;
 		const c = ringRadius + canvasMargin;
 		const size = c * 2;
