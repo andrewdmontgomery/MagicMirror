@@ -32,7 +32,9 @@ let config = {
 				units: "imperial",
 				windUnits: "imperial",
 				updateInterval: 10 * 60 * 1000,
-				appendLocationNameToHeader: false
+				appendLocationNameToHeader: false,
+				showUVIndex: true,
+				showWindDirectionAsArrow: true
 			}
 		},
 		{
@@ -46,6 +48,15 @@ let config = {
 				lon: -93.0430,
 				units: "imperial",
 				maxNumberOfDays: 5
+			}
+		},
+		{
+			module: "MMM-WindCompass",
+			position: "bottom_right",
+			config: {
+				lat: 44.8480,
+				lon: -93.0430,
+				units: "imperial"
 			}
 		}
 	]

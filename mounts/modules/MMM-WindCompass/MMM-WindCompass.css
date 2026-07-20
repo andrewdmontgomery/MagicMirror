@@ -1,0 +1,108 @@
+.wind-compass-module {
+	color: #fff;
+}
+
+.wind-header {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+	padding-bottom: 5px;
+	border-bottom: 1px solid #666;
+	color: #999;
+	font-size: 15px;
+	text-transform: uppercase;
+}
+
+.wind-header-icon svg {
+	width: 18px;
+	height: 18px;
+	fill: none;
+	stroke: #999;
+	stroke-width: 2;
+}
+
+.wind-body {
+	display: flex;
+	align-items: center;
+	gap: 16px;
+}
+
+.wind-metrics {
+	display: flex;
+	flex-direction: column;
+	min-width: 134px;
+}
+
+.wind-metric-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 6px 0;
+	border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+	font-size: 16px;
+}
+
+.wind-metric-row:last-child {
+	border-bottom: none;
+}
+
+.wind-metric-label {
+	color: #fff;
+}
+
+.wind-metric-value {
+	color: #999;
+}
+
+.compass-svg {
+	width: 142px;
+	height: 142px;
+}
+
+.tick-major {
+	stroke: rgba(255, 255, 255, 0.22);
+	stroke-width: 1.75;
+}
+
+.tick-minor {
+	stroke: rgba(255, 255, 255, 0.08);
+	stroke-width: 1;
+}
+
+.compass-label {
+	fill: #f0f0f0;
+	font-family: Arial, Helvetica, sans-serif;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+.needle-shape {
+	fill: #fff;
+	stroke: #fff;
+	stroke-width: 3;
+	stroke-linejoin: round;
+	stroke-linecap: round;
+}
+
+.needle-dot {
+	fill: #fff;
+}
+
+.compass-center-disc {
+	fill: #111;
+	stroke: rgba(255, 255, 255, 0.25);
+	stroke-width: 1;
+}
+
+.compass-speed {
+	fill: #fff;
+	font-size: 26px;
+	font-weight: 700;
+}
+
+.compass-unit {
+	fill: #fff;
+	font-size: 15px;
+	font-weight: 700;
+}

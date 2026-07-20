@@ -7,5 +7,6 @@ services:
       - MM_SCENARIO=server
     volumes:
       - ./mounts/config:/opt/magic_mirror/config
+      - ./mounts/modules/MMM-WindCompass:/opt/magic_mirror/modules/MMM-WindCompass
     ports:
       - "8080:8080"
