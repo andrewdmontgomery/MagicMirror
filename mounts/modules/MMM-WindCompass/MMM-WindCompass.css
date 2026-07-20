@@ -2,16 +2,9 @@
 	color: #fff;
 }
 
-.wind-header {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	margin-bottom: 10px;
-	padding-bottom: 5px;
-	border-bottom: 1px solid #666;
-	color: #999;
-	font-size: 15px;
-	text-transform: uppercase;
+.wind-header-icon {
+	float: left;
+	margin-top: -1px;
 }
 
 .wind-header-icon svg {

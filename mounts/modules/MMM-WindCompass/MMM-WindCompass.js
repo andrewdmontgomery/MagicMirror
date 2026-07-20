@@ -14,7 +14,8 @@ Module.register("MMM-WindCompass", {
 		lon: 0,
 		units: "imperial",
 		updateInterval: 10 * 60 * 1000,
-		animationSpeed: 1000
+		animationSpeed: 1000,
+		locationName: ""
 	},
 
 	start: function () {
@@ -42,6 +43,14 @@ Module.register("MMM-WindCompass", {
 		return ["MMM-WindCompass.css"];
 	},
 
+	getHeader: function () {
+		let label = this.data.header || "Wind";
+		if (this.config.locationName) {
+			label += ` ${this.config.locationName}`;
+		}
+		return `<span class="wind-header-icon">${WIND_ICON_SVG}</span><span class="wind-header-label">${label}</span>`;
+	},
+
 	degreesToCardinal: function (deg) {
 		return CARDINAL_DIRECTIONS[Math.round(deg / 22.5) % 16];
 	},
@@ -61,11 +70,6 @@ Module.register("MMM-WindCompass", {
 		const direction = Math.round(this.windData.direction);
 		const cardinal = this.degreesToCardinal(direction);
 		const unitLabel = this.config.units === "imperial" ? "mph" : "km/h";
-
-		const header = document.createElement("div");
-		header.className = "wind-header";
-		header.innerHTML =
-			`<span class="wind-header-icon">${WIND_ICON_SVG}</span><span class="wind-header-label">Wind</span>`;
 
 		const body = document.createElement("div");
 		body.className = "wind-body";
@@ -94,7 +98,6 @@ Module.register("MMM-WindCompass", {
 		body.appendChild(list);
 		body.appendChild(compass);
 
-		wrapper.appendChild(header);
 		wrapper.appendChild(body);
 
 		return wrapper;

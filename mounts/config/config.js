@@ -23,7 +23,7 @@ let config = {
 		{
 			module: "weather",
 			position: "top_right",
-			header: "Inver Grove Heights, MN",
+			header: "Current Weather",
 			config: {
 				weatherProvider: "openmeteo",
 				type: "current",
@@ -47,12 +47,14 @@ let config = {
 				lat: 44.8480,
 				lon: -93.0430,
 				units: "imperial",
-				maxNumberOfDays: 5
+				maxNumberOfDays: 5,
+				appendLocationNameToHeader: false
 			}
 		},
 		{
 			module: "MMM-WindCompass",
 			position: "bottom_right",
+			header: "Wind",
 			config: {
 				lat: 44.8480,
 				lon: -93.0430,
