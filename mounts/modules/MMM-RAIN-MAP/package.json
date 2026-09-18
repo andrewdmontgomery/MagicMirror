@@ -1,0 +1,70 @@
+{
+  "name": "mmm-rain-map",
+  "version": "3.2.0",
+  "description": "A Rain Radar Map based on the Rainviewer API for the MagicMirror² platform.",
+  "type": "commonjs",
+  "main": "MMM-RAIN-MAP.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jalibu/MMM-RAIN-MAP.git"
+  },
+  "keywords": [
+    "magicmirror",
+    "weather",
+    "rain",
+    "leaflet",
+    "map",
+    "radar",
+    "clouds"
+  ],
+  "author": "Jan.Litzenburger@gmail.com",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/jalibu/MMM-RAIN-MAP/issues"
+  },
+  "homepage": "https://github.com/jalibu/MMM-RAIN-MAP#readme",
+  "scripts": {
+    "build": "rollup -c && cp node_modules/leaflet/dist/leaflet.css leaflet.css",
+    "demo": "cd ../../ && MM_CONFIG_FILE=modules/MMM-RAIN-MAP/config.demo.js node --run start:dev",
+    "dev": "rollup -c --sourcemap=inline",
+    "dev:watch": "node --run dev -- --watch",
+    "prepare": "simple-git-hooks || exit 0",
+    "lint": "eslint && prettier . --check",
+    "lint:fix": "eslint --fix && prettier . --write",
+    "release": "commit-and-tag-version --commit-all --config ./changelog.config.js",
+    "test": "node --run lint && node --run test:unit",
+    "test:unit": "node --test tests/unit/**/*.test.js"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "npx lint-staged",
+    "pre-push": "node --run test && node --run build"
+  },
+  "lint-staged": {
+    "*": [
+      "eslint --fix",
+      "prettier --write --ignore-unknown"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@rollup/plugin-commonjs": "^29.0.3",
+    "@rollup/plugin-node-resolve": "^16.0.3",
+    "@rollup/plugin-terser": "^1.0.0",
+    "@rollup/plugin-typescript": "^12.3.0",
+    "@types/leaflet": "^1.9.22",
+    "@types/magicmirror-module": "^2.16.6",
+    "commit-and-tag-version": "^13.2.1",
+    "eslint": "^10.10.0",
+    "leaflet": "^1.9.4",
+    "lint-staged": "^17.5.1",
+    "prettier": "^3.9.7",
+    "rollup": "^4.63.3",
+    "simple-git-hooks": "^2.14.0",
+    "tslib": "^2.8.1",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.0"
+  },
+  "allowScripts": {
+    "simple-git-hooks@2.14.0": true
+  }
+}
