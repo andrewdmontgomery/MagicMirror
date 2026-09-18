@@ -66,7 +66,8 @@
 	justify-content: center;
 }
 
-.hourly-icon-svg {
+.hourly-icon-svg,
+.apple-icon-svg {
 	width: 44px;
 	height: 34px;
 	display: block;

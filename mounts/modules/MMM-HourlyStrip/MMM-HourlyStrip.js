@@ -100,6 +100,24 @@ function hourlySunEventIcon(kind) {
 	);
 }
 
+/* Apple glyphs exported from SF Symbols (local-only, see icons/.gitignore).
+ * Loaded at runtime via fetch; hand-built SVGs above stay as fallback. */
+const APPLE_ICON_FILES = {
+	sun: "sun-max-fill.svg",
+	moon: "moon-fill.svg",
+	partlyDay: "cloud-sun-fill.svg",
+	partlyNight: "cloud-moon-fill.svg",
+	cloudy: "cloud-fill.svg",
+	drizzle: "cloud-drizzle-fill.svg",
+	rain: "cloud-rain-fill.svg",
+	heavyRain: "cloud-heavyrain-fill.svg",
+	fog: "cloud-fog-fill.svg",
+	snow: "cloud-snow-fill.svg",
+	thunder: "cloud-bolt-rain-fill.svg",
+	sunrise: "sunrise-fill.svg",
+	sunset: "sunset-fill.svg"
+};
+
 Module.register("MMM-HourlyStrip", {
 	defaults: {
 		lat: 0,
@@ -117,10 +135,44 @@ Module.register("MMM-HourlyStrip", {
 	start: function () {
 		this.hourlyData = null;
 		this.loaded = false;
+		this.appleIcons = {};
 		this.getData();
+		this.loadAppleIcons();
 		setInterval(() => {
 			this.getData();
 		}, this.config.updateInterval);
+	},
+
+	loadAppleIcons: function () {
+		const files = [...new Set(Object.values(APPLE_ICON_FILES))];
+		let settled = 0;
+		const maybeRefresh = () => {
+			settled += 1;
+			if (settled === files.length && this.loaded) {
+				this.updateDom(this.config.animationSpeed);
+			}
+		};
+		files.forEach((file) => {
+			fetch(this.file(`icons/${file}`))
+				.then((response) => {
+					if (!response.ok) {
+						throw new Error(response.statusText);
+					}
+					return response.text();
+				})
+				.then((svg) => {
+					this.appleIcons[file] = svg;
+					maybeRefresh();
+				})
+				.catch(() => {
+					maybeRefresh();
+				});
+		});
+	},
+
+	/* Apple glyph if loaded, otherwise the hand-built fallback. */
+	iconSvg: function (appleFile, fallbackSvg) {
+		return this.appleIcons[appleFile] || fallbackSvg;
 	},
 
 	getData: function () {
@@ -141,19 +193,29 @@ Module.register("MMM-HourlyStrip", {
 
 	iconForCode: function (code, isDay, precipMm) {
 		if (code === 0) {
-			return isDay ? hourlySunIcon() : hourlyMoonIcon();
+			return isDay
+				? this.iconSvg(APPLE_ICON_FILES.sun, hourlySunIcon())
+				: this.iconSvg(APPLE_ICON_FILES.moon, hourlyMoonIcon());
 		}
 		if (code === 1 || code === 2) {
-			return hourlyPartlyIcon(isDay);
+			return isDay
+				? this.iconSvg(APPLE_ICON_FILES.partlyDay, hourlyPartlyIcon(true))
+				: this.iconSvg(APPLE_ICON_FILES.partlyNight, hourlyPartlyIcon(false));
 		}
 		if (code === 3) {
-			return hourlyCloudyIcon();
+			return this.iconSvg(APPLE_ICON_FILES.cloudy, hourlyCloudyIcon());
 		}
 		if (code === 45 || code === 48) {
-			return hourlyFogIcon();
+			return this.iconSvg(APPLE_ICON_FILES.fog, hourlyFogIcon());
 		}
-		if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
-			return hourlyRainIcon(precipMm);
+		if (code >= 51 && code <= 57) {
+			return this.iconSvg(APPLE_ICON_FILES.drizzle, hourlyRainIcon(0));
+		}
+		if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) {
+			const mm = Number(precipMm) || 0;
+			return mm >= 0.5
+				? this.iconSvg(APPLE_ICON_FILES.heavyRain, hourlyRainIcon(precipMm))
+				: this.iconSvg(APPLE_ICON_FILES.rain, hourlyRainIcon(precipMm));
 		}
 		if ((code >= 71 && code <= 77) || code === 85 || code === 86) {
 			return hourlySnowIcon();
@@ -274,7 +336,9 @@ Module.register("MMM-HourlyStrip", {
 
 		const iconWrap = document.createElement("div");
 		iconWrap.className = "hourly-icon";
-		iconWrap.innerHTML = hourlySunEventIcon(entry.kind);
+		iconWrap.innerHTML = entry.kind === "sunrise"
+			? this.iconSvg(APPLE_ICON_FILES.sunrise, hourlySunEventIcon("sunrise"))
+			: this.iconSvg(APPLE_ICON_FILES.sunset, hourlySunEventIcon("sunset"));
 
 		const label = document.createElement("div");
 		label.className = "hourly-temp hourly-sun-label";
