@@ -9,16 +9,13 @@ let config = {
 	language: "en",
 	locale: "en-US",
 	logLevel: ["INFO", "LOG", "WARN", "ERROR"],
-	timeFormat: 24,
+	timeFormat: 12,
 	units: "imperial",
 
 	modules: [
 		{
 			module: "clock",
-			position: "top_left",
-			config: {
-				timeFormat: 12
-			}
+			position: "top_left"
 		},
 		{
 			module: "weather",
