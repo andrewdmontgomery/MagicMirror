@@ -22,6 +22,7 @@ Module.register("MMM-VectorRain", {
 		this.mapStyle = null;
 		this.styleError = null;
 		this.map = null;
+		this.libRetries = 0;
 		this.getStyle();
 	},
 
@@ -53,6 +54,15 @@ Module.register("MMM-VectorRain", {
 		wrapper.className = "vector-rain-module";
 
 		if (typeof maplibregl === "undefined") {
+			// Vendor script (803KB) may still be loading when getDom first
+			// runs — retry a few times before declaring failure.
+			if (this.libRetries < 20) {
+				this.libRetries += 1;
+				setTimeout(() => this.updateDom(), 500);
+				wrapper.className = "vector-rain-module dimmed light small";
+				wrapper.innerHTML = "Loading map library &hellip;";
+				return wrapper;
+			}
 			wrapper.className = "vector-rain-module dimmed light small";
 			wrapper.innerHTML = "Map library failed to load &hellip;";
 			return wrapper;
