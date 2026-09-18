@@ -36,6 +36,21 @@ restart. Use this after any edit under `mounts/config/` or `mounts/modules/`.
    - **Fail**: quote the specific error line(s) verbatim, don't just say
      "there were errors."
 
+5. For anything beyond startup (broken rendering, missing data, features not
+   triggering): container logs are not enough — front-end `Log.log()` and
+   runtime exceptions only appear in the **browser devtools console** (F12),
+   never in `docker compose logs`. Ask the user for the red console lines,
+   and for fetches, the Network tab status. Silent front-end failures
+   (a severed notification feed, a layer that never paints) restart cleanly
+   by design.
+
+6. If the user reports stale behavior after a change to module JS/CSS/assets
+   (but not `config.js`), suspect the browser cache before the code:
+   module files keep the same URLs across deploys, so have them hard-refresh
+   (`Cmd+Shift+R` / `Ctrl+F5`, or Shift-click refresh in Safari) before
+   debugging further. Appending `?v=N` to fetched asset URLs (see
+   `new-mm-module`) avoids this class entirely for fetch-loaded assets.
+
 Do not skip step 3 — a container can restart "successfully" (exit code 0,
 `docker compose restart` reports no failure) while the actual MagicMirror
 process inside it failed to parse config or load a module, which only shows

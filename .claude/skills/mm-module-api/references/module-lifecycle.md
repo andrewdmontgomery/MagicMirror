@@ -217,6 +217,24 @@ Called when the module is hidden (`module.hide()`) / shown (`module.show()`).
 Override to pause/restart expensive work like update timers — there's no point
 polling an API for a module nobody can see.
 
+## Hidden modules and zero-size containers
+
+`getDom()` runs for hidden modules too (`hiddenOnStartup`, or still hidden
+behind a show-condition). The DOM exists but has `display: none`, so any
+size-dependent initialization — maps, canvas/WebGL contexts, measured layouts —
+sees a **zero-size container** and misbehaves (tiles never load, layers never
+attach, paint targets nothing). Lessons from MMM-VectorRain:
+
+- Don't assume first paint has real dimensions. Guard size-dependent setup
+  (e.g. skip layer creation while `!map.loaded()`) and **retry it on a later
+  trigger** (data arrival, timer tick, `resume()`), not just once at startup —
+  a single transient false can orphan the feature forever with no error.
+- Make setup calls idempotent (existence guards like `getSource()` /
+  `getLayer()` checks) so retries are safe.
+- On `resume()` (module shown), assume dimensions changed: tear down and
+  re-create anything sized at init time, or at minimum call the library's
+  resize/invalidate hook before trusting the viewport.
+
 ---
 
 ## Instance methods

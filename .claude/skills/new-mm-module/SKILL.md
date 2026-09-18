@@ -89,6 +89,28 @@ If a node_helper is added, wire up `getData`/`socketNotificationReceived` in
 the front-end file to send `GET_DATA` and handle `DATA_RESULT`, matching
 MMM-WindCompass's pattern.
 
+## Static assets and third-party libraries
+
+Four lessons from MMM-VectorRain, learned the hard way:
+
+1. **Nested asset paths must go through `this.file()`.** `getScripts()` /
+   `getStyles()` entries resolve from the server root, not the module folder —
+   a bare `"vendor/lib.js"` loads as `/vendor/lib.js` (404). Always write
+   `this.file("vendor/lib.js")`, which expands to
+   `modules/<MMM-Name>/vendor/lib.js`.
+2. **Vendor UMD builds, not ESM.** `getScripts()` injects classic scripts, so
+   the library must expose a global. MapLibre 4.7.1 was pinned specifically
+   because it's the last line shipping UMD (`dist/maplibre-gl.js`); v5+ is
+   ESM-only and won't load this way.
+3. **Validate fetched asset bodies.** MagicMirror answers HTTP 200 with a
+   `404: Not Found` text body for missing module assets, so `response.ok`
+   is not enough — check the content (e.g. `text.trimStart().startsWith("<svg")`)
+   before injecting it, or error-page text ends up rendered as content.
+4. **Cache-bust reused filenames.** The browser caches module assets by URL;
+   when a file's contents change under the same name, append a query string
+   (e.g. `this.file("icons/x.svg?v=2")`) or a hard refresh is required to see
+   the new version.
+
 ## Wiring it in
 
 1. **`docker-compose.yml`** — add a volume line alongside the existing
