@@ -90,7 +90,7 @@ let config = {
 					{ lat: 44.8480, lng: -93.0430, color: "red" }
 				],
 				provider: "rainviewer",
-				mapUrl: "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
+				mapUrl: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
 				maxHistoryFrames: 6,
 				maxForecastFrames: 0,
 				updateIntervalInSeconds: 600
