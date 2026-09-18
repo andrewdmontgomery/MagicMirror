@@ -23,11 +23,22 @@ Module.register("MMM-VectorRain", {
 		this.styleError = null;
 		this.map = null;
 		this.libRetries = 0;
+		this.frames = null;
+		this.frameIndex = 0;
+		this.frameTimer = null;
 		this.getStyle();
+		this.getFrames();
+		setInterval(() => {
+			this.getFrames();
+		}, this.config.updateInterval);
 	},
 
 	getStyle: function () {
 		this.sendSocketNotification("GET_VECTOR_STYLE", {});
+	},
+
+	getFrames: function () {
+		this.sendSocketNotification("GET_VECTOR_FRAMES", {});
 	},
 
 	socketNotificationReceived: function (notification, payload) {
@@ -38,6 +49,12 @@ Module.register("MMM-VectorRain", {
 				this.styleError = (payload && payload.error) || "Style fetch failed.";
 			}
 			this.updateDom(this.config.animationSpeed);
+		} else if (notification === "VECTOR_FRAMES_RESULT") {
+			if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
+				this.frames = payload;
+				this.frameIndex = 0;
+				this.restartAnimation();
+			}
 		}
 	},
 
@@ -109,5 +126,49 @@ Module.register("MMM-VectorRain", {
 			interactive: false,
 			attributionControl: { compact: true }
 		});
+		this.map.on("load", () => {
+			this.addRadarLayer();
+			this.restartAnimation();
+		});
+	},
+
+	frameTileUrl: function (frame) {
+		// RainViewer free API: color scheme 2 (Universal Blue), smooth+snow 1_1.
+		return `${this.frames.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+	},
+
+	addRadarLayer: function () {
+		if (!this.map || !this.frames || this.map.getSource("rainviewer")) {
+			return;
+		}
+		const first = this.frames.frames[this.frameIndex % this.frames.frames.length];
+		this.map.addSource("rainviewer", {
+			type: "raster",
+			tiles: [this.frameTileUrl(first)],
+			tileSize: 256
+		});
+		this.map.addLayer({
+			id: "rainviewer",
+			type: "raster",
+			source: "rainviewer",
+			paint: { "raster-opacity": this.config.radarOpacity }
+		});
+	},
+
+	restartAnimation: function () {
+		if (this.frameTimer) {
+			clearInterval(this.frameTimer);
+			this.frameTimer = null;
+		}
+		if (!this.frames || this.frames.frames.length < 2) {
+			return;
+		}
+		this.frameTimer = setInterval(() => {
+			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
+			const source = this.map && this.map.getSource("rainviewer");
+			if (source) {
+				source.setTiles([this.frameTileUrl(this.frames.frames[this.frameIndex])]);
+			}
+		}, this.config.animationSpeedMs);
 	}
 });

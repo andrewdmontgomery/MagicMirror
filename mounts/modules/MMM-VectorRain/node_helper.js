@@ -38,8 +38,20 @@ module.exports = NodeHelper.create({
 		}
 	},
 
-	// Frame list lands in Phase 4.
 	fetchFrames: async function () {
-		this.sendSocketNotification("VECTOR_FRAMES_RESULT", { frames: [] });
+		try {
+			const response = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+			if (!response.ok) {
+				throw new Error(`HTTP ${response.status}`);
+			}
+			const json = await response.json();
+			const past = (json.radar && json.radar.past) || [];
+			this.sendSocketNotification("VECTOR_FRAMES_RESULT", {
+				host: json.host,
+				frames: past.map((frame) => ({ time: frame.time, path: frame.path }))
+			});
+		} catch (error) {
+			console.error("MMM-VectorRain: failed to fetch radar frames", error);
+		}
 	}
 });
