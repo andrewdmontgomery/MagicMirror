@@ -211,8 +211,7 @@ Module.register("MMM-VectorRain", {
 				id,
 				type: "raster",
 				source: id,
-				layout: { visibility: i === this.frameIndex ? "visible" : "none" },
-				paint: { "raster-opacity": this.config.radarOpacity }
+				paint: { "raster-opacity": i === this.frameIndex ? this.config.radarOpacity : 0 }
 			});
 		});
 	},
@@ -251,8 +250,10 @@ Module.register("MMM-VectorRain", {
 			}
 			const source = this.map && this.map.getSource(`rainviewer-${this.frameIndex}`);
 			if (this.map && source) {
-				this.map.setLayoutProperty(`rainviewer-${prev}`, "visibility", "none");
-				this.map.setLayoutProperty(`rainviewer-${this.frameIndex}`, "visibility", "visible");
+				// Opacity (not visibility): transparent layers keep their
+				// tiles loaded, so switching frames never flashes blank.
+				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
+				this.map.setPaintProperty(`rainviewer-${this.frameIndex}`, "raster-opacity", this.config.radarOpacity);
 			}
 		}, this.config.animationSpeedMs);
 	}
