@@ -123,6 +123,18 @@
 	color: #5ac8fa;
 }
 
+/* Attribution caption: dim and small under the map. */
+.vector-attrib {
+	text-align: right;
+	font-size: 11px;
+	color: #777;
+	margin-top: 4px;
+}
+
+.vector-attrib a {
+	color: #777;
+}
+
 /* Crosshair reset control: dark circle matching the mirror pills. */
 .vector-reset-wrap {
 	background: rgba(0, 0, 0, 0.55);
@@ -139,11 +151,4 @@
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
-}
-
-/* Attribution starts collapsed to just the ⓘ toggle; the full text only
- * shows while expanded (click). The stock compact control renders expanded
- * on this mirror, so enforce the collapsed state here. */
-.vector-rain-map .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) .maplibregl-ctrl-attrib-inner {
-	display: none;
 }

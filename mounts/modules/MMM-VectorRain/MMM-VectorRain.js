@@ -123,6 +123,7 @@ Module.register("MMM-VectorRain", {
 		if (this.config.showTimeline) {
 			mapDiv.appendChild(this.timelineDiv());
 		}
+		wrapper.appendChild(this.attributionDiv());
 
 		// Drop any previous map (updateDom replaces the container).
 		if (this.map) {
@@ -155,10 +156,8 @@ Module.register("MMM-VectorRain", {
 			// top-right so it never collides with the timeline.
 			attributionControl: false
 		});
-		this.map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
 		this.map.addControl(this.resetControl(), "top-right");
 		this.map.on("load", () => {
-			this.collapseAttribution();
 			this.addRadarLayer();
 			this.addMarkers();
 			this.applyPosition();
@@ -213,12 +212,15 @@ Module.register("MMM-VectorRain", {
 		return legend;
 	},
 
-	collapseAttribution: function () {
-		const attrib = document.querySelector(".vector-rain-map .maplibregl-ctrl-attrib.maplibregl-compact");
-		if (attrib) {
-			attrib.classList.remove("maplibregl-compact-show");
-			attrib.removeAttribute("open");
-		}
+	/* Static attribution caption (CARTO/OSM terms require it visible).
+	 * Replaces the stock toggle: dimmer, smaller, and below the map. */
+	attributionDiv: function () {
+		const attrib = document.createElement("div");
+		attrib.className = "vector-attrib light";
+		attrib.innerHTML =
+			'© <a href="https://carto.com/attribution" target="_blank">CARTO</a> ' +
+			'© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors';
+		return attrib;
 	},
 
 	positions: function () {
