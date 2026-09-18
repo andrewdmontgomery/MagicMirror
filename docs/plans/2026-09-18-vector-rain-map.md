@@ -4,7 +4,11 @@
 
 **Architecture:** New module `MMM-VectorRain` (name changeable) following the `MMM-WindCompass` pattern: `node_helper.js` fetches RainViewer frame lists + the CARTO style JSON server-side (so the API key stays out of the browser bundle), front-end renders a MapLibre map with the radar frames as an animated raster overlay.
 
-**Tech Stack:** MapLibre GL JS (vendored, BSD-3-Clause), CARTO vector basemaps (keyed, free tier), RainViewer raster tiles, Open-Meteo unchanged.
+**Tech Stack:** MapLibre GL JS 4.7.1 UMD (vendored, BSD-3-Clause), CARTO vector basemaps (keyed, free tier), RainViewer raster tiles, Open-Meteo unchanged.
+
+**Spike results (verified 2026-09-18):**
+- Radar tiles: `{host}/v2/radar/{id}/256/{z}/{x}/{y}/2/1_1.png` returns HTTP 200 PNG — overlay as a MapLibre `raster` source, cycle `setTiles()` per frame.
+- MapLibre: pin **4.7.1**, the last line shipping a UMD `dist/maplibre-gl.js` global build (loads via MM `getScripts`). v5/v6 are ESM-only and would need dynamic-import surgery — not worth it.
 
 ---
 
