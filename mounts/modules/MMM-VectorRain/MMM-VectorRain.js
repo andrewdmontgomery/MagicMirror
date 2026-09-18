@@ -312,7 +312,7 @@ Module.register("MMM-VectorRain", {
 		if (!this.map || !this.map.loaded() || !this.frames || this.map.getSource("rainviewer-0")) {
 			return;
 		}
-		// One raster layer per frame; the tick toggles visibility instead
+		// One raster layer per frame; the tick crossfades opacity instead
 		// of swapping tile URLs, so frames preload and never flicker.
 		this.frames.frames.forEach((frame, i) => {
 			const id = `rainviewer-${i}`;
@@ -446,9 +446,9 @@ Module.register("MMM-VectorRain", {
 		return `${hours}:${minutes} ${ampm}`;
 	},
 
-	/* Apple-style history timeline: play/pause, current frame time with
-	 * age, and a scrubbable track. Free RainViewer has past frames only,
-	 * so this covers history, not forecast. */
+	/* Apple-style history timeline: play/pause, current frame time, and a
+	 * scrubbable track. Free RainViewer has past frames only, so this
+	 * covers history, not forecast. */
 	timelineDiv: function () {
 		const timeline = document.createElement("div");
 		timeline.className = "vector-timeline";
