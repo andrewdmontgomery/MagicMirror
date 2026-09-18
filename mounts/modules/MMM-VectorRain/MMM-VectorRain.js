@@ -135,11 +135,20 @@ Module.register("MMM-VectorRain", {
 			attributionControl: { compact: true }
 		});
 		this.map.on("load", () => {
+			this.collapseAttribution();
 			this.addRadarLayer();
 			this.addMarkers();
 			this.applyPosition();
 			this.restartAnimation();
 		});
+	},
+
+	collapseAttribution: function () {
+		const attrib = document.querySelector(".vector-rain-map .maplibregl-ctrl-attrib.maplibregl-compact");
+		if (attrib) {
+			attrib.classList.remove("maplibregl-compact-show");
+			attrib.removeAttribute("open");
+		}
 	},
 
 	positions: function () {

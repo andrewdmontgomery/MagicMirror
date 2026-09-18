@@ -1,5 +1,12 @@
-/* MMM-VectorRain — vector rain radar (shell, filled in per plan phases) */
+/* MMM-VectorRain — vector rain radar */
 
 .vector-rain-module {
 	box-sizing: border-box;
+}
+
+/* Attribution starts collapsed to just the ⓘ toggle; the full text only
+ * shows while expanded (click). The stock compact control renders expanded
+ * on this mirror, so enforce the collapsed state here. */
+.vector-rain-map .maplibregl-ctrl-attrib.maplibregl-compact:not(.maplibregl-compact-show) .maplibregl-ctrl-attrib-inner {
+	display: none;
 }
