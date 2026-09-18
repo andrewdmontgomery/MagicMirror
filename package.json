@@ -3,7 +3,7 @@
 	"private": true,
 	"description": "Docker-mounted MagicMirror config and first-party modules.",
 	"scripts": {
-		"test": "node --test mounts/modules/MMM-HourlyStrip/tests/unit/*.test.js mounts/modules/MMM-VectorRain/tests/unit/*.test.js",
+		"test": "npm run test:hourly-strip && npm run test:vector-rain",
 		"test:hourly-strip": "node --test mounts/modules/MMM-HourlyStrip/tests/unit/*.test.js",
 		"test:vector-rain": "node --test mounts/modules/MMM-VectorRain/tests/unit/*.test.js"
 	}
