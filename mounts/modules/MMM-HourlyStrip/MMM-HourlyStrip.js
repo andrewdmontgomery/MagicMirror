@@ -339,19 +339,25 @@ Module.register("MMM-HourlyStrip", {
 		iconWrap.className = "hourly-icon";
 		iconWrap.innerHTML = this.iconForCode(entry.code, entry.isDay, entry.precipMm);
 
-		col.appendChild(time);
-		col.appendChild(iconWrap);
+		// Fixed-height middle zone: icon + optional precip stay grouped and
+		// centered, so columns with and without precip line up exactly.
+		const mid = document.createElement("div");
+		mid.className = "hourly-mid";
+		mid.appendChild(iconWrap);
 
 		if (entry.precip >= this.config.showPrecipThreshold) {
 			const precip = document.createElement("div");
 			precip.className = "hourly-precip";
 			precip.textContent = `${Math.round(entry.precip)}%`;
-			col.appendChild(precip);
+			mid.appendChild(precip);
 		}
 
 		const temp = document.createElement("div");
-		temp.className = "hourly-temp" + (entry.precip >= this.config.showPrecipThreshold ? " with-precip" : "");
+		temp.className = "hourly-temp";
 		temp.textContent = `${Math.round(entry.temp)}°`;
+
+		col.appendChild(time);
+		col.appendChild(mid);
 		col.appendChild(temp);
 
 		return col;
@@ -375,8 +381,12 @@ Module.register("MMM-HourlyStrip", {
 		label.className = "hourly-temp hourly-sun-label";
 		label.textContent = entry.kind === "sunrise" ? "Sunrise" : "Sunset";
 
+		const mid = document.createElement("div");
+		mid.className = "hourly-mid";
+		mid.appendChild(iconWrap);
+
 		col.appendChild(time);
-		col.appendChild(iconWrap);
+		col.appendChild(mid);
 		col.appendChild(label);
 
 		return col;

@@ -56,11 +56,23 @@
 	font-weight: 700;
 	letter-spacing: 0.02em;
 	white-space: nowrap;
-	margin-bottom: 8px;
+	height: 20px;
+	line-height: 20px;
+	margin-bottom: 6px;
+}
+
+/* Fixed-height middle zone shared by every column: the icon (+ optional
+ * precip) stays grouped and vertically centered, so columns with and
+ * without a precip label measure exactly the same top-to-bottom. */
+.hourly-mid {
+	height: 64px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
 }
 
 .hourly-icon {
-	height: 46px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -78,18 +90,15 @@
 	font-size: 13px;
 	font-weight: 700;
 	line-height: 1;
-	margin-top: 2px;
-	min-height: 13px;
+	margin-top: 1px;
 }
 
 .hourly-temp {
 	font-size: 22px;
 	font-weight: 700;
-	margin-top: 8px;
-}
-
-.hourly-temp.with-precip {
-	margin-top: 3px;
+	height: 28px;
+	line-height: 28px;
+	margin-top: 6px;
 }
 
 .hourly-col-sun .hourly-sun-label {
