@@ -308,6 +308,14 @@ Module.register("MMM-VectorRain", {
 				// tiles loaded, so switching frames never flashes blank.
 				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
 				this.map.setPaintProperty(`rainviewer-${this.frameIndex}`, "raster-opacity", this.config.radarOpacity);
+				// Re-pin markers above the radar every tick: belt and
+				// suspenders against any ordering drift.
+				if (this.map.getLayer("markers-halo")) {
+					this.map.moveLayer("markers-halo");
+				}
+				if (this.map.getLayer("markers")) {
+					this.map.moveLayer("markers");
+				}
 			}
 		}, this.config.animationSpeedMs);
 	}
