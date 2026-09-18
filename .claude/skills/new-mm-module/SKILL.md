@@ -1,6 +1,6 @@
 ---
 name: new-mm-module
-description: Scaffold a new custom MagicMirror module under mounts/modules, following the pattern established by MMM-WindCompass — front-end JS, optional node_helper, docker-compose mount, and config.js entry.
+description: Scaffold a new custom MagicMirror module under mounts/modules — front-end JS, optional node_helper, docker-compose mount, and config.js entry.
 disable-model-invocation: true
 ---
 
@@ -13,11 +13,11 @@ just a new folder.
 
 Ask the user (if not already given):
 1. **Module name** — MagicMirror convention is `MMM-<Name>` (e.g.
-   `MMM-WindCompass`). Use this as the folder name and the `Module.register`
+   `MMM-Example`). Use this as the folder name and the `Module.register`
    string.
 2. **Does it need server-side data?** If it fetches an API or reads a file,
    it needs a `node_helper.js` (fetch must happen in Node, not the browser —
-   see MMM-WindCompass's `node_helper.js` for why). If it's purely
+   see an existing module's `node_helper.js` for why). If it's purely
    presentational (e.g. renders from config only), skip the node_helper.
 3. **Screen position** — one of MagicMirror's region names (`top_left`,
    `top_right`, `bottom_left`, `bottom_right`, `top_center`, `top_bar`,
@@ -87,11 +87,11 @@ module.exports = NodeHelper.create({
 ```
 If a node_helper is added, wire up `getData`/`socketNotificationReceived` in
 the front-end file to send `GET_DATA` and handle `DATA_RESULT`, matching
-MMM-WindCompass's pattern.
+the established node_helper pattern.
 
 ## Static assets and third-party libraries
 
-Four lessons from MMM-VectorRain, learned the hard way:
+Four asset lessons learned the hard way:
 
 1. **Nested asset paths must go through `this.file()`.** `getScripts()` /
    `getStyles()` entries resolve from the server root, not the module folder —
@@ -115,7 +115,7 @@ Four lessons from MMM-VectorRain, learned the hard way:
 ## Wiring it in
 
 1. **`docker-compose.yml`** — add a volume line alongside the existing
-   MMM-WindCompass mount:
+   module mounts:
    ```yaml
    - ./mounts/modules/<MMM-Name>:/opt/magic_mirror/modules/<MMM-Name>
    ```

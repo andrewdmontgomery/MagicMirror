@@ -28,7 +28,7 @@ restart. Use this after any edit under `mounts/config/` or `mounts/modules/`.
    - "Checking modules structure configuration ..." followed by anything
      other than "doesn't contain errors"
    - Any module helper failing to load (`Module helper loaded: <name>` should
-     appear for every custom module, including MMM-WindCompass)
+     appear for every custom module in `mounts/modules`)
 
 4. Report clearly:
    - **Pass**: config parsed cleanly, all module helpers loaded, no

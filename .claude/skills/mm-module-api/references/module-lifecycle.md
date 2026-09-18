@@ -20,7 +20,7 @@ and [The Core module file](https://docs.magicmirror.builders/module-development/
 - Anything else (e.g. a `css/` subfolder) is up to you.
 
 Module names must be globally unique. Convention is `MMM-MyModuleName` (not
-enforced, but this repo follows it — see `MMM-WindCompass`).
+enforced, but recommended).
 
 ## Registration
 
@@ -102,10 +102,10 @@ getScripts: function () {
 
 ## `getStyles()` → Array\<String\>
 
-Same idea, for CSS. `MMM-WindCompass` uses this to load `MMM-WindCompass.css`:
+Same idea, for CSS. A module uses this to load its own stylesheet:
 ```js
 getStyles: function () {
-  return ["MMM-WindCompass.css"];
+  return ["mymodule.css"];
 }
 ```
 Same stall-on-failure warning as `getScripts()`.
@@ -124,9 +124,9 @@ getTranslations: function () {
 ## `getDom()` → DOM Node
 
 Called whenever MagicMirror needs to (re)render the module's content — at startup,
-and any time `this.updateDom()` is called. **Must return a DOM node.** This is what
-`MMM-WindCompass` uses, since its markup (metrics list + compass SVG) depends
-entirely on live wind data:
+and any time `this.updateDom()` is called. **Must return a DOM node.** Use it
+whenever markup shape depends on runtime data — e.g. a metrics list plus a
+computed SVG dial:
 
 ```js
 getDom: function () {
@@ -140,7 +140,7 @@ getDom: function () {
 
 If `getDom()` isn't overridden, MagicMirror renders a Nunjucks template instead.
 Good fit for mostly-static layouts; `getDom()` is the better fit when markup shape
-depends on runtime data (see MMM-WindCompass).
+depends on runtime data (see above).
 
 ```js
 getTemplate: function () {
@@ -171,7 +171,7 @@ getHeader: function () {
   return this.data.header + " Foo Bar";
 }
 ```
-`MMM-WindCompass.js`'s `getHeader()` goes further: it returns HTML (an icon `<span>`
+A module's `getHeader()` can go further: returning HTML (an icon `<span>`
 plus a label `<span>`), which works because MagicMirror's core framework does
 `header.innerHTML = getHeader()` for *any* module — the built-in `weather` module
 just never uses that capability, only ever returning a plain string.
@@ -223,7 +223,7 @@ polling an API for a module nobody can see.
 behind a show-condition). The DOM exists but has `display: none`, so any
 size-dependent initialization — maps, canvas/WebGL contexts, measured layouts —
 sees a **zero-size container** and misbehaves (tiles never load, layers never
-attach, paint targets nothing). Lessons from MMM-VectorRain:
+attach, paint targets nothing). Defend against it:
 
 - Don't assume first paint has real dimensions. Guard size-dependent setup
   (e.g. skip layer creation while `!map.loaded()`) and **retry it on a later
