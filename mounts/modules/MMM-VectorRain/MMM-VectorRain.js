@@ -81,12 +81,15 @@ Module.register("MMM-VectorRain", {
 			return;
 		}
 		this.libAttempted = true;
-		const url = this.file("vendor/maplibre-gl.mjs");
-		Log.log(`[MMM-VectorRain] importing map library from ${url}`);
-		import(url)
+		// Dynamic import needs an absolute URL — a bare relative path
+		// does not resolve. Same for the worker URL below.
+		const libUrl = new URL(this.file("vendor/maplibre-gl.mjs"), document.baseURI).href;
+		const workerUrl = new URL(this.file("vendor/maplibre-gl-worker.mjs"), document.baseURI).href;
+		Log.log(`[MMM-VectorRain] importing map library from ${libUrl}`);
+		import(libUrl)
 			.then((lib) => {
 				Log.log("[MMM-VectorRain] library imported, setting worker URL");
-				lib.setWorkerUrl(this.file("vendor/maplibre-gl-worker.mjs"));
+				lib.setWorkerUrl(workerUrl);
 				this.maplibre = lib;
 				this.updateDom();
 			})
