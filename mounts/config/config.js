@@ -60,7 +60,7 @@ let config = {
 				showPrecipThreshold: 20,
 				showSunrise: true,
 				showSunset: true,
-				iconStyle: "monochrome"
+				iconStyle: "fill"
 			}
 		},
 		{
