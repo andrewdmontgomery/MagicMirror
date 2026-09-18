@@ -116,7 +116,14 @@ let config = {
 			header: "Rain Map (Vector)",
 			config: {
 				lat: 44.8480,
-				lon: -93.0430
+				lon: -93.0430,
+				radarOpacity: 0.45,
+				mapPositions: [
+					{ lat: 44.8480, lng: -93.0430, zoom: 7, loops: 1 }
+				],
+				markers: [
+					{ lat: 44.8480, lng: -93.0430, color: "red" }
+				]
 			}
 		},
 		{

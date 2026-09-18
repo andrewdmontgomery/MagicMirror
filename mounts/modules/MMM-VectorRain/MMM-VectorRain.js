@@ -25,6 +25,8 @@ Module.register("MMM-VectorRain", {
 		this.libRetries = 0;
 		this.frames = null;
 		this.frameIndex = 0;
+		this.positionIndex = 0;
+		this.loopCount = 0;
 		this.frameTimer = null;
 		this.getStyle();
 		this.getFrames();
@@ -128,7 +130,58 @@ Module.register("MMM-VectorRain", {
 		});
 		this.map.on("load", () => {
 			this.addRadarLayer();
+			this.addMarkers();
+			this.applyPosition();
 			this.restartAnimation();
+		});
+	},
+
+	positions: function () {
+		if (Array.isArray(this.config.mapPositions) && this.config.mapPositions.length > 0) {
+			return this.config.mapPositions;
+		}
+		return [{ lat: this.config.lat, lng: this.config.lon, zoom: this.config.defaultZoomLevel, loops: 1 }];
+	},
+
+	applyPosition: function () {
+		if (!this.map) {
+			return;
+		}
+		const positions = this.positions();
+		const pos = positions[this.positionIndex % positions.length] || positions[0];
+		this.positionIndex = this.positionIndex % positions.length;
+		this.map.jumpTo({
+			center: [pos.lng !== undefined ? pos.lng : this.config.lon, pos.lat !== undefined ? pos.lat : this.config.lat],
+			zoom: pos.zoom !== undefined ? pos.zoom : this.config.defaultZoomLevel
+		});
+	},
+
+	addMarkers: function () {
+		if (!this.map || !this.map.loaded() || this.map.getSource("markers")) {
+			return;
+		}
+		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
+		this.map.addSource("markers", {
+			type: "geojson",
+			data: {
+				type: "FeatureCollection",
+				features: markers.map((m) => ({
+					type: "Feature",
+					geometry: { type: "Point", coordinates: [m.lng, m.lat] },
+					properties: { color: m.color || "red" }
+				}))
+			}
+		});
+		this.map.addLayer({
+			id: "markers",
+			type: "circle",
+			source: "markers",
+			paint: {
+				"circle-radius": 6,
+				"circle-color": ["get", "color"],
+				"circle-stroke-color": "#ffffff",
+				"circle-stroke-width": 2
+			}
 		});
 	},
 
@@ -164,10 +217,24 @@ Module.register("MMM-VectorRain", {
 			return;
 		}
 		// The map may have finished loading before the frames arrived (or
-		// vice versa) — ensure the layer exists before animating.
+		// vice versa) — ensure the layers exist before animating.
 		this.addRadarLayer();
+		this.addMarkers();
 		this.frameTimer = setInterval(() => {
 			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
+			if (this.frameIndex === 0) {
+				// Full radar loop done — advance map position if its loop
+				// quota is met, mirroring MMM-RAIN-MAP's mapPositions.
+				this.loopCount += 1;
+				const positions = this.positions();
+				const pos = positions[this.positionIndex % positions.length];
+				const quota = (pos && pos.loops) || 1;
+				if (this.loopCount >= quota) {
+					this.loopCount = 0;
+					this.positionIndex = (this.positionIndex + 1) % positions.length;
+					this.applyPosition();
+				}
+			}
 			const source = this.map && this.map.getSource("rainviewer");
 			if (source) {
 				source.setTiles([this.frameTileUrl(this.frames.frames[this.frameIndex])]);
