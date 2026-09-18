@@ -4,9 +4,9 @@ description: Audit which modules depend on a MagicMirror module before removing,
 ---
 
 A module with no `position` still runs its `node_helper` and still
-broadcasts notifications — e.g. the old positionless `weather` hourly
-instance was MMM-RainWatcher's only data feed, and deleting it left the
-rain map permanently hidden with zero errors in `docker compose logs`.
+broadcasts notifications — e.g. a positionless hourly-forecast instance was
+a rain-watcher's only data feed, and deleting it left the rain map
+permanently hidden with zero errors in `docker compose logs`.
 
 ## Steps
 
@@ -37,7 +37,7 @@ rain map permanently hidden with zero errors in `docker compose logs`.
      will see — e.g. "rain map stays hidden").
    - **Replacement feed**: whether another instance broadcasts a
      compatible payload (same notification name *and* the fields the
-     consumer actually reads — e.g. RainWatcher needs a non-empty
+     consumer actually reads — e.g. a rain-watcher needing a non-empty
      `hourlyArray` with `precipitationProbability`/`precipitationAmount`,
      which current/forecast instances don't carry).
    - **Safe to remove**: only if no consumers exist, or the consumer is

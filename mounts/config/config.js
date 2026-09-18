@@ -83,37 +83,26 @@ let config = {
 			}
 		},
 		{
-			module: "MMM-RAIN-MAP",
+			module: "MMM-WeatherMap",
 			position: "bottom_left",
-			header: "Rain Map",
+			header: "Weather Map",
 			hiddenOnStartup: true,
 			config: {
-				displayHoursBeforeRain: -1,
-				mapWidth: "420px",
-				mapHeight: "420px",
-				defaultZoomLevel: 6,
+				lat: 44.8480,
+				lon: -93.0430,
+				radarOpacity: 0.45,
 				mapPositions: [
 					{ lat: 44.8480, lng: -93.0430, zoom: 7, loops: 1 }
 				],
 				markers: [
 					{ lat: 44.8480, lng: -93.0430, color: "red" }
-				],
-				provider: "rainviewer",
-				radarOpacity: 0.45,
-				// CARTO dark tiles when a key is present locally (.env),
-				// keyless Esri dark-gray otherwise — never commit a key here.
-				mapUrl: process.env.SECRET_CARTO_API_KEY
-					? "/cors?url=https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${SECRET_CARTO_API_KEY}"
-					: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-				maxHistoryFrames: 6,
-				maxForecastFrames: 0,
-				updateIntervalInSeconds: 600
+				]
 			}
 		},
 		{
 			module: "MMM-RainWatcher",
 			config: {
-				targetModule: "MMM-RAIN-MAP",
+				targetModule: "MMM-WeatherMap",
 				forecastHours: 12,
 				rainProbabilityThreshold: 30,
 				rainAmountThreshold: 0.3

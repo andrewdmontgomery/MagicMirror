@@ -1,0 +1,154 @@
+/* MMM-WeatherMap — animated weather map */
+
+.vector-rain-module {
+	box-sizing: border-box;
+}
+
+.vector-rain-map {
+	position: relative;
+}
+
+/* Apple-style precipitation legend (colors = RainViewer Universal Blue). */
+.vector-legend {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	z-index: 5;
+	background: rgba(0, 0, 0, 0.45);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	border-radius: 12px;
+	padding: 10px 12px;
+	color: #fff;
+	pointer-events: none;
+}
+
+.vector-legend-title {
+	font-size: 15px;
+	font-weight: 700;
+	margin-bottom: 8px;
+	white-space: nowrap;
+}
+
+.vector-legend-body {
+	display: flex;
+	gap: 8px;
+	align-items: stretch;
+}
+
+.vector-legend-bar {
+	width: 8px;
+	border-radius: 4px;
+	background: linear-gradient(to top, #6cd1eb 0%, #007fb4 35%, #ffaa00 68%, #d91b00 100%);
+}
+
+.vector-legend-labels {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	font-size: 13px;
+	line-height: 1.2;
+	white-space: nowrap;
+}
+
+/* Apple-style history timeline (past frames only). */
+.vector-timeline {
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: 10px;
+	z-index: 5;
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	background: rgba(0, 0, 0, 0.45);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	border-radius: 12px;
+	padding: 8px 12px;
+	color: #fff;
+}
+
+.vector-tl-play {
+	flex: 0 0 auto;
+	width: 34px;
+	height: 34px;
+	border-radius: 50%;
+	border: 1px solid rgba(255, 255, 255, 0.35);
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.vector-tl-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.vector-tl-label {
+	font-size: 14px;
+	font-weight: 700;
+	margin-bottom: 6px;
+	white-space: nowrap;
+}
+
+.vector-tl-track {
+	display: flex;
+	gap: 3px;
+	height: 8px;
+	cursor: pointer;
+}
+
+.vector-tl-tick {
+	flex: 1 1 auto;
+	border-radius: 2px;
+	background: rgba(255, 255, 255, 0.22);
+}
+
+.vector-tl-tick.vector-tl-active {
+	background: #fff;
+}
+
+.vector-tl-ticks {
+	display: flex;
+	justify-content: space-between;
+	font-size: 11px;
+	margin-top: 4px;
+	white-space: nowrap;
+}
+
+.vector-tl-now {
+	font-weight: 700;
+	color: #5ac8fa;
+}
+
+/* Attribution caption: dim and small under the map. */
+.vector-attrib {
+	text-align: right;
+	font-size: 11px;
+	color: #777;
+	margin-top: 4px;
+}
+
+.vector-attrib a {
+	color: #777;
+}
+
+/* Crosshair reset control: dark circle matching the mirror pills. */
+.vector-reset-wrap {
+	background: rgba(0, 0, 0, 0.55);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	border-radius: 50%;
+	overflow: hidden;
+}
+
+.vector-reset-wrap .vector-reset {
+	width: 34px;
+	height: 34px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
