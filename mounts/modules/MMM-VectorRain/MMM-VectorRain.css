@@ -4,6 +4,51 @@
 	box-sizing: border-box;
 }
 
+.vector-rain-map {
+	position: relative;
+}
+
+/* Apple-style precipitation legend (colors = RainViewer Universal Blue). */
+.vector-legend {
+	position: absolute;
+	top: 10px;
+	left: 10px;
+	z-index: 5;
+	background: rgba(0, 0, 0, 0.55);
+	border-radius: 12px;
+	padding: 10px 12px;
+	color: #fff;
+	pointer-events: none;
+}
+
+.vector-legend-title {
+	font-size: 15px;
+	font-weight: 700;
+	margin-bottom: 8px;
+	white-space: nowrap;
+}
+
+.vector-legend-body {
+	display: flex;
+	gap: 8px;
+	align-items: stretch;
+}
+
+.vector-legend-bar {
+	width: 8px;
+	border-radius: 4px;
+	background: linear-gradient(to top, #6cd1eb 0%, #007fb4 35%, #ffaa00 68%, #d91b00 100%);
+}
+
+.vector-legend-labels {
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	font-size: 13px;
+	line-height: 1.2;
+	white-space: nowrap;
+}
+
 /* Attribution starts collapsed to just the ⓘ toggle; the full text only
  * shows while expanded (click). The stock compact control renders expanded
  * on this mirror, so enforce the collapsed state here. */

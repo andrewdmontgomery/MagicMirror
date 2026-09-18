@@ -14,6 +14,7 @@ Module.register("MMM-VectorRain", {
 		],
 		radarOpacity: 0.45,
 		animationSpeedMs: 800,
+		showLegend: true,
 		updateInterval: 10 * 60 * 1000,
 		animationSpeed: 1000
 	},
@@ -105,6 +106,10 @@ Module.register("MMM-VectorRain", {
 		mapDiv.style.height = this.config.mapHeight;
 		wrapper.appendChild(mapDiv);
 
+		if (this.config.showLegend) {
+			mapDiv.appendChild(this.legendDiv());
+		}
+
 		// Drop any previous map (updateDom replaces the container).
 		if (this.map) {
 			this.map.remove();
@@ -141,6 +146,22 @@ Module.register("MMM-VectorRain", {
 			this.applyPosition();
 			this.restartAnimation();
 		});
+	},
+
+	/* Apple-style precipitation legend. Gradient stops sampled from
+	 * RainViewer's Universal Blue scheme (color scheme 2), so the swatch
+	 * means the same thing as the radar cells. */
+	legendDiv: function () {
+		const legend = document.createElement("div");
+		legend.className = "vector-legend";
+		legend.innerHTML =
+			'<div class="vector-legend-title">Precipitation</div>' +
+			'<div class="vector-legend-body">' +
+			'<div class="vector-legend-bar"></div>' +
+			'<div class="vector-legend-labels">' +
+			"<span>Extreme</span><span>Heavy</span><span>Moderate</span><span>Light</span>" +
+			"</div></div>";
+		return legend;
 	},
 
 	collapseAttribution: function () {
