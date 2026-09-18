@@ -1,16 +1,19 @@
-/* MMM-HourlyStrip — Apple Weather style hourly card */
+/* MMM-HourlyStrip — hourly strip in the mirror's native theme:
+ * transparent background, inherited font, theme text tones.
+ * Layout mirrors the Apple Weather hourly strip; chrome matches
+ * the other modules (cf. MMM-WindCompass: no card, subtle dividers). */
 
 .hourly-strip-module {
 	box-sizing: border-box;
 	width: 100%;
+	color: #fff;
 }
 
 .hourly-card {
-	background: rgba(28, 30, 64, 0.78);
-	border-radius: 20px;
-	padding: 14px 18px 12px;
-	color: #fff;
-	backdrop-filter: blur(6px);
+	background: none;
+	border-radius: 0;
+	padding: 0;
+	backdrop-filter: none;
 }
 
 .hourly-summary {

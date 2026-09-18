@@ -51,6 +51,7 @@ let config = {
 		{
 			module: "MMM-HourlyStrip",
 			position: "bottom_bar",
+			header: "Hourly Forecast",
 			config: {
 				lat: 44.8480,
 				lon: -93.0430,
