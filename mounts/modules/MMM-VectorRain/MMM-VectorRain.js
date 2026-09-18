@@ -270,6 +270,9 @@ Module.register("MMM-VectorRain", {
 			return;
 		}
 		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
+		// Literal color (not a ["get"] expression): v6 warns on some
+		// data-driven paint and can refuse to render the layer.
+		const dotColor = (markers[0] && markers[0].color) || "red";
 		this.map.addSource("markers", {
 			type: "geojson",
 			data: {
@@ -288,7 +291,7 @@ Module.register("MMM-VectorRain", {
 			paint: {
 				"circle-radius": 5.5,
 				"circle-opacity": 1,
-				"circle-color": ["get", "color"],
+				"circle-color": dotColor,
 				"circle-stroke-color": "#ffffff",
 				"circle-stroke-width": 2.5,
 				"circle-stroke-opacity": 1
