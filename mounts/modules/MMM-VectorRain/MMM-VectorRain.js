@@ -2,6 +2,11 @@
  * Standalone replacement candidate for MMM-RAIN-MAP; that module is left
  * untouched (see docs/plans/2026-09-18-vector-rain-map.md).
  */
+
+/* Frame-layer ceiling: RainViewer serves ~13 past frames; anything beyond
+ * this is a runaway, not data. Used only to bound teardownRadar's sweep. */
+const MAX_RADAR_LAYERS = 64;
+
 Module.register("MMM-VectorRain", {
 	defaults: {
 		mapWidth: "420px",
@@ -147,15 +152,20 @@ Module.register("MMM-VectorRain", {
 		}
 		wrapper.appendChild(this.attributionDiv());
 
-		// Drop any previous map (updateDom replaces the container).
+		// Map lifecycle lives here, not in the DOM builder below: every
+		// updateDom replaces the container, so drop the old map and init
+		// after insert, when the new container has dimensions.
+		setTimeout(() => this.renderMapView(mapDiv), 0);
+
+		return wrapper;
+	},
+
+	renderMapView: function (mapDiv) {
 		if (this.map) {
 			this.map.remove();
 			this.map = null;
 		}
-		// Init after insert so the container has dimensions.
-		setTimeout(() => this.initMap(mapDiv), 0);
-
-		return wrapper;
+		this.initMap(mapDiv);
 	},
 
 	initMap: function (container) {
@@ -342,7 +352,7 @@ Module.register("MMM-VectorRain", {
 		// vice versa) — ensure the layers exist before animating.
 		this.addRadarLayer();
 		this.addMarkers();
-		this.showFrame(this.frameIndex, true);
+		this.showFrame(this.frameIndex, { paint: false });
 		if (!this.playing) {
 			return;
 		}
@@ -371,7 +381,7 @@ Module.register("MMM-VectorRain", {
 					}
 				}
 			}
-			this.showFrame(this.frameIndex, false, prev);
+			this.showFrame(this.frameIndex, { prev });
 		}, this.config.animationSpeedMs);
 	},
 
@@ -380,7 +390,7 @@ Module.register("MMM-VectorRain", {
 		if (!this.map) {
 			return;
 		}
-		for (let i = 0; i < 64; i += 1) {
+		for (let i = 0; i < MAX_RADAR_LAYERS; i += 1) {
 			const id = `rainviewer-${i}`;
 			if (!this.map.getSource(id)) {
 				break;
@@ -393,9 +403,9 @@ Module.register("MMM-VectorRain", {
 	},
 
 	/* Display one frame: paint swap plus timeline label + progress. */
-	showFrame: function (index, skipPaint, prev) {
+	showFrame: function (index, { paint = true, prev } = {}) {
 		this.frameIndex = index;
-		if (!skipPaint && this.map && this.map.getSource(`rainviewer-${index}`)) {
+		if (paint && this.map && this.map.getSource(`rainviewer-${index}`)) {
 			if (prev !== undefined && this.map.getSource(`rainviewer-${prev}`)) {
 				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
 			}
@@ -434,7 +444,7 @@ Module.register("MMM-VectorRain", {
 			this.togglePlay();
 		}
 		const prev = this.frameIndex;
-		this.showFrame(index, false, prev);
+		this.showFrame(index, { prev });
 	},
 
 	formatFrameTime: function (unixSeconds) {
