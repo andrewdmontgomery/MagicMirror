@@ -128,7 +128,10 @@ Module.register("MMM-VectorRain", {
 			// RainViewer serves radar tiles only to zoom 7 — anything
 			// higher renders as "Zoom Level Not Supported" tiles.
 			maxZoom: 7,
-			interactive: false,
+			// Parity with the old map: scroll/pinch zoom and drag pan.
+			// Position cycling only jumps on an actual position change,
+			// so exploring the map isn't yanked back every radar loop.
+			interactive: true,
 			attributionControl: { compact: true }
 		});
 		this.map.on("load", () => {
@@ -214,6 +217,11 @@ Module.register("MMM-VectorRain", {
 				paint: { "raster-opacity": i === this.frameIndex ? this.config.radarOpacity : 0 }
 			});
 		});
+		// Radar layers may land above the markers when frames arrive after
+		// map load — pin markers to the top so the home dot stays opaque.
+		if (this.map.getLayer("markers")) {
+			this.map.moveLayer("markers");
+		}
 	},
 
 	restartAnimation: function () {
@@ -238,14 +246,19 @@ Module.register("MMM-VectorRain", {
 			if (this.frameIndex === 0) {
 				// Full radar loop done — advance map position if its loop
 				// quota is met, mirroring MMM-RAIN-MAP's mapPositions.
+				// Only jumps on an actual change so manual pan/zoom isn't
+				// yanked back when there's a single position.
 				this.loopCount += 1;
 				const positions = this.positions();
 				const pos = positions[this.positionIndex % positions.length];
 				const quota = (pos && pos.loops) || 1;
 				if (this.loopCount >= quota) {
 					this.loopCount = 0;
-					this.positionIndex = (this.positionIndex + 1) % positions.length;
-					this.applyPosition();
+					const next = (this.positionIndex + 1) % positions.length;
+					if (next !== this.positionIndex) {
+						this.positionIndex = next;
+						this.applyPosition();
+					}
 				}
 			}
 			const source = this.map && this.map.getSource(`rainviewer-${this.frameIndex}`);
