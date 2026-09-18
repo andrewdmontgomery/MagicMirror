@@ -100,25 +100,28 @@ function hourlySunEventIcon(kind) {
 	);
 }
 
-/* Vendored glyphs: Phosphor Icons, Fill weight (MIT, see icons/LICENSE).
- * Loaded at runtime via fetch; hand-built SVGs above stay as fallback.
- * Phosphor ships one rain glyph, so drizzle/rain/heavy share cloud-rain —
- * intensity still reads from the blue precip % underneath. */
+/* Vendored glyphs: Meteocons by Bas Milius (MIT, see icons/LICENSE),
+ * pinned at v3.0.0-next.10 under icons/meteocons/<style>/. `iconStyle`
+ * picks "monochrome" (single-color, tinted below) or "fill" (baked
+ * colors, used as-is). Hand-built SVGs above stay as fallback. */
 const ICON_FILES = {
-	sun: "sun-max-fill.svg",
-	moon: "moon-fill.svg",
-	partlyDay: "cloud-sun-fill.svg",
-	partlyNight: "cloud-moon-fill.svg",
-	cloudy: "cloud-fill.svg",
-	drizzle: "cloud-rain-fill.svg",
-	rain: "cloud-rain-fill.svg",
-	heavyRain: "cloud-rain-fill.svg",
-	fog: "cloud-fog-fill.svg",
-	snow: "cloud-snow-fill.svg",
-	thunder: "cloud-bolt-rain-fill.svg"
+	sun: "clear-day.svg",
+	moon: "clear-night.svg",
+	partlyDay: "partly-cloudy-day.svg",
+	partlyNight: "partly-cloudy-night.svg",
+	cloudy: "cloudy.svg",
+	drizzle: "drizzle.svg",
+	rain: "rain.svg",
+	heavyRain: "extreme-rain.svg",
+	fog: "fog.svg",
+	snow: "snow.svg",
+	heavySnow: "extreme-snow.svg",
+	thunder: "thunderstorms-rain.svg",
+	sunrise: "sunrise.svg",
+	sunset: "sunset.svg"
 };
-/* Note: Phosphor has no sunrise/sunset glyphs — sunColumn() uses the
- * hand-built sun+arrow icons, which already match this strip. */
+
+const ICON_STYLES = ["monochrome", "fill"];
 
 Module.register("MMM-HourlyStrip", {
 	defaults: {
@@ -130,6 +133,7 @@ Module.register("MMM-HourlyStrip", {
 		showSunrise: true,
 		showSunset: true,
 		showSummary: false,
+		iconStyle: "monochrome",
 		updateInterval: 10 * 60 * 1000,
 		animationSpeed: 1000
 	},
@@ -145,7 +149,12 @@ Module.register("MMM-HourlyStrip", {
 		}, this.config.updateInterval);
 	},
 
+	iconStyle: function () {
+		return ICON_STYLES.includes(this.config.iconStyle) ? this.config.iconStyle : "monochrome";
+	},
+
 	loadGlyphIcons: function () {
+		const style = this.iconStyle();
 		const files = [...new Set(Object.values(ICON_FILES))];
 		let settled = 0;
 		const maybeRefresh = () => {
@@ -156,7 +165,7 @@ Module.register("MMM-HourlyStrip", {
 		};
 		files.forEach((file) => {
 			// ?v= cache-bust: filenames were reused across icon sets.
-			fetch(this.file(`icons/${file}?v=2`))
+			fetch(this.file(`icons/meteocons/${style}/${file}?v=3`))
 				.then((response) => {
 					if (!response.ok) {
 						throw new Error(response.statusText);
@@ -179,12 +188,16 @@ Module.register("MMM-HourlyStrip", {
 	},
 
 	/* Vendored glyph if loaded, otherwise the hand-built fallback.
-	 * Phosphor glyphs use currentColor, so tint here (yellow sun, white
-	 * rest) and ensure the sizing class is present on the root element. */
+	 * Monochrome glyphs use currentColor, so tint here (yellow sun, white
+	 * rest). Fill-style glyphs carry baked colors and are used as-is.
+	 * Either way the sizing class is stamped onto the root element. */
 	iconSvg: function (iconFile, fallbackSvg) {
 		const svg = this.glyphIcons[iconFile];
 		if (!svg) {
 			return fallbackSvg;
+		}
+		if (this.iconStyle() === "fill") {
+			return svg.replace("<svg ", '<svg class="apple-icon-svg" ');
 		}
 		const color = iconFile === ICON_FILES.sun ? "#FFD60A" : "#FFFFFF";
 		return svg.replace("<svg ", `<svg class="apple-icon-svg" color="${color}" `);
@@ -233,10 +246,13 @@ Module.register("MMM-HourlyStrip", {
 				: this.iconSvg(ICON_FILES.rain, hourlyRainIcon(precipMm));
 		}
 		if ((code >= 71 && code <= 77) || code === 85 || code === 86) {
-			return hourlySnowIcon();
+			const mm = Number(precipMm) || 0;
+			return mm >= 0.5
+				? this.iconSvg(ICON_FILES.heavySnow, hourlySnowIcon())
+				: this.iconSvg(ICON_FILES.snow, hourlySnowIcon());
 		}
 		if (code >= 95) {
-			return hourlyThunderIcon();
+			return this.iconSvg(ICON_FILES.thunder, hourlyThunderIcon());
 		}
 		return hourlyCloudyIcon();
 	},
@@ -351,7 +367,9 @@ Module.register("MMM-HourlyStrip", {
 
 		const iconWrap = document.createElement("div");
 		iconWrap.className = "hourly-icon";
-		iconWrap.innerHTML = hourlySunEventIcon(entry.kind);
+		iconWrap.innerHTML = entry.kind === "sunrise"
+			? this.iconSvg(ICON_FILES.sunrise, hourlySunEventIcon("sunrise"))
+			: this.iconSvg(ICON_FILES.sunset, hourlySunEventIcon("sunset"));
 
 		const label = document.createElement("div");
 		label.className = "hourly-temp hourly-sun-label";

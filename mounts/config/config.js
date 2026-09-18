@@ -59,7 +59,8 @@ let config = {
 				hoursToShow: 24,
 				showPrecipThreshold: 20,
 				showSunrise: true,
-				showSunset: true
+				showSunset: true,
+				iconStyle: "monochrome"
 			}
 		},
 		{
