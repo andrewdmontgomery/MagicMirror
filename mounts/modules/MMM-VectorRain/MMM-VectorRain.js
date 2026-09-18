@@ -151,8 +151,11 @@ Module.register("MMM-VectorRain", {
 			// Position cycling only jumps on an actual position change,
 			// so exploring the map isn't yanked back every radar loop.
 			interactive: true,
-			attributionControl: { compact: true }
+			// Attribution is required by CARTO/OSM terms, but docked
+			// top-right so it never collides with the timeline.
+			attributionControl: false
 		});
+		this.map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
 		this.map.on("load", () => {
 			this.collapseAttribution();
 			this.addRadarLayer();
