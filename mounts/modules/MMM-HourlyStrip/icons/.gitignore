@@ -1,0 +1,4 @@
+# Apple SF Symbol artwork is local-only (licensed). Export SVGs here; they are never committed.
+*.svg
+*.pdf
+*.png
