@@ -1,5 +1,94 @@
-/* MMM-HourlyStrip — Apple Weather style hourly card (shell, filled in next commit) */
+/* MMM-HourlyStrip — Apple Weather style hourly card */
 
 .hourly-strip-module {
 	box-sizing: border-box;
+	width: 100%;
+}
+
+.hourly-card {
+	background: rgba(28, 30, 64, 0.78);
+	border-radius: 20px;
+	padding: 14px 18px 12px;
+	color: #fff;
+	backdrop-filter: blur(6px);
+}
+
+.hourly-summary {
+	font-size: 17px;
+	line-height: 1.35;
+	padding-bottom: 10px;
+}
+
+.hourly-divider {
+	height: 1px;
+	background: rgba(255, 255, 255, 0.22);
+	margin-bottom: 10px;
+}
+
+.hourly-strip {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	gap: 6px;
+}
+
+.hourly-strip::-webkit-scrollbar {
+	display: none;
+}
+
+.hourly-col {
+	flex: 0 0 auto;
+	min-width: 68px;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+.hourly-time {
+	font-size: 15px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+	margin-bottom: 8px;
+}
+
+.hourly-icon {
+	height: 34px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.hourly-icon-svg {
+	width: 44px;
+	height: 34px;
+	display: block;
+}
+
+.hourly-precip {
+	color: #5ac8fa;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1;
+	margin-top: 2px;
+	min-height: 13px;
+}
+
+.hourly-temp {
+	font-size: 22px;
+	font-weight: 700;
+	margin-top: 8px;
+}
+
+.hourly-temp.with-precip {
+	margin-top: 3px;
+}
+
+.hourly-col-sun .hourly-sun-label {
+	font-size: 19px;
+	white-space: nowrap;
 }
