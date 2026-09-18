@@ -167,6 +167,7 @@ Module.register("MMM-VectorRain", {
 			return;
 		}
 		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
+		markers.forEach((m) => this.pinImage(m.color || "red"));
 		this.map.addSource("markers", {
 			type: "geojson",
 			data: {
@@ -174,21 +175,64 @@ Module.register("MMM-VectorRain", {
 				features: markers.map((m) => ({
 					type: "Feature",
 					geometry: { type: "Point", coordinates: [m.lng, m.lat] },
-					properties: { color: m.color || "red" }
+					properties: { pin: this.pinKey(m.color || "red") }
 				}))
 			}
 		});
 		this.map.addLayer({
 			id: "markers",
-			type: "circle",
+			type: "symbol",
 			source: "markers",
-			paint: {
-				"circle-radius": 6,
-				"circle-color": ["get", "color"],
-				"circle-stroke-color": "#ffffff",
-				"circle-stroke-width": 2
+			layout: {
+				"icon-image": ["get", "pin"],
+				"icon-anchor": "bottom",
+				"icon-size": 0.8,
+				"icon-allow-overlap": true
 			}
 		});
+	},
+
+	pinKey: function (color) {
+		return `pin-${String(color).toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+	},
+
+	/* Classic map pin drawn in code (no asset files): colored teardrop
+	 * with a darker inner ring and a transparent center hole. */
+	pinImage: function (color) {
+		const key = this.pinKey(color);
+		if (this.map.hasImage(key)) {
+			return;
+		}
+		const w = 56, h = 84, cx = 28, cy = 26, r = 20;
+		const canvas = document.createElement("canvas");
+		canvas.width = w;
+		canvas.height = h;
+		const ctx = canvas.getContext("2d");
+		ctx.shadowColor = "rgba(0, 0, 0, 0.5)";
+		ctx.shadowBlur = 6;
+		ctx.shadowOffsetY = 2;
+		ctx.fillStyle = color;
+		ctx.beginPath();
+		ctx.arc(cx, cy, r, 0, Math.PI * 2);
+		ctx.fill();
+		ctx.beginPath();
+		ctx.moveTo(cx - r * 0.92, cy + r * 0.45);
+		ctx.lineTo(cx + r * 0.92, cy + r * 0.45);
+		ctx.lineTo(cx, h - 4);
+		ctx.closePath();
+		ctx.fill();
+		// Darker inner ring, then punch a transparent center hole.
+		ctx.shadowColor = "transparent";
+		ctx.strokeStyle = "rgba(0, 0, 0, 0.25)";
+		ctx.lineWidth = r * 0.32;
+		ctx.beginPath();
+		ctx.arc(cx, cy, r * 0.62, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.globalCompositeOperation = "destination-out";
+		ctx.beginPath();
+		ctx.arc(cx, cy, r * 0.32, 0, Math.PI * 2);
+		ctx.fill();
+		this.map.addImage(key, canvas);
 	},
 
 	frameTileUrl: function (frame) {
