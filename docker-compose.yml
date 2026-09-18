@@ -12,7 +12,6 @@ services:
     volumes:
       - ./mounts/config:/opt/magic_mirror/config
       - ./mounts/modules/MMM-WindCompass:/opt/magic_mirror/modules/MMM-WindCompass
-      - ./mounts/modules/MMM-RAIN-MAP:/opt/magic_mirror/modules/MMM-RAIN-MAP
       - ./mounts/modules/MMM-RainWatcher:/opt/magic_mirror/modules/MMM-RainWatcher
       - ./mounts/modules/MMM-HourlyStrip:/opt/magic_mirror/modules/MMM-HourlyStrip
       - ./mounts/modules/MMM-VectorRain:/opt/magic_mirror/modules/MMM-VectorRain
