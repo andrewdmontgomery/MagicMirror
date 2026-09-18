@@ -212,7 +212,27 @@ Module.register("MMM-HourlyStrip", {
 			this.hourlyData = payload;
 			this.loaded = true;
 			this.updateDom(this.config.animationSpeed);
+			this.broadcastHourly();
 		}
+	},
+
+	/* Re-broadcast the hourly forecast in the stock weather module's
+	 * WEATHER_UPDATED shape so MMM-RainWatcher can drive the rain map
+	 * from this single Open-Meteo fetch (no separate hourly instance). */
+	broadcastHourly: function () {
+		const hourly = this.hourlyData && this.hourlyData.hourly;
+		if (!hourly || !Array.isArray(hourly.time)) {
+			return;
+		}
+		const hourlyArray = hourly.time.map((t, i) => ({
+			date: t,
+			precipitationProbability: hourly.precipitation_probability ? hourly.precipitation_probability[i] : 0,
+			precipitationAmount: hourly.precipitation ? hourly.precipitation[i] : 0
+		}));
+		this.sendNotification("WEATHER_UPDATED", {
+			source: "MMM-HourlyStrip",
+			hourlyArray
+		});
 	},
 
 	getStyles: function () {
