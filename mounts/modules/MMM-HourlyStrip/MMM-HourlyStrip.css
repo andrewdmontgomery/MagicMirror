@@ -1,0 +1,5 @@
+/* MMM-HourlyStrip — Apple Weather style hourly card (shell, filled in next commit) */
+
+.hourly-strip-module {
+	box-sizing: border-box;
+}
