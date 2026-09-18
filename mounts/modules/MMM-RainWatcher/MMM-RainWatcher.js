@@ -1,6 +1,10 @@
 /* MMM-RainWatcher
  * Shows or hides the MMM-RAIN-MAP module based on the hourly precipitation
- * forecast broadcast by the default weather module (WEATHER_UPDATED).
+ * forecast broadcast as WEATHER_UPDATED (hourlyArray).
+ *
+ * The data comes from MMM-HourlyStrip's Open-Meteo fetch — the stock
+ * weather module has no hourly instance in this config (current + forecast
+ * only, whose hourlyArray is empty and ignored here).
  *
  * The stock MMM-RAIN-MAP stays at displayHoursBeforeRain: -1 (no opinions of
  * its own) and starts hidden via hiddenOnStartup. This module owns the

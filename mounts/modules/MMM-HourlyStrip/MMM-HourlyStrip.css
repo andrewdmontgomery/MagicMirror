@@ -1,0 +1,107 @@
+/* MMM-HourlyStrip — hourly strip in the mirror's native theme:
+ * transparent background, inherited font, theme text tones.
+ * Layout mirrors the Apple Weather hourly strip; chrome matches
+ * the other modules (cf. MMM-WindCompass: no card, subtle dividers). */
+
+.hourly-strip-module {
+	box-sizing: border-box;
+	width: 100%;
+	color: #fff;
+}
+
+.hourly-card {
+	background: none;
+	border-radius: 0;
+	padding: 0;
+	backdrop-filter: none;
+}
+
+.hourly-summary {
+	font-size: 17px;
+	line-height: 1.35;
+	padding-bottom: 10px;
+}
+
+.hourly-divider {
+	height: 1px;
+	background: rgba(255, 255, 255, 0.22);
+	margin-bottom: 10px;
+}
+
+.hourly-strip {
+	display: flex;
+	flex-direction: row;
+	flex-wrap: nowrap;
+	overflow-x: auto;
+	scrollbar-width: none;
+	-ms-overflow-style: none;
+	gap: 6px;
+}
+
+.hourly-strip::-webkit-scrollbar {
+	display: none;
+}
+
+.hourly-col {
+	flex: 0 0 auto;
+	min-width: 78px;
+	text-align: center;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+}
+
+.hourly-time {
+	font-size: 15px;
+	font-weight: 700;
+	letter-spacing: 0.02em;
+	white-space: nowrap;
+	height: 20px;
+	line-height: 20px;
+	margin-bottom: 6px;
+}
+
+/* Fixed-height middle zone shared by every column: the icon (+ optional
+ * precip) stays grouped and vertically centered, so columns with and
+ * without a precip label measure exactly the same top-to-bottom. */
+.hourly-mid {
+	height: 64px;
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+}
+
+.hourly-icon {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.hourly-icon-svg,
+.apple-icon-svg {
+	width: 58px;
+	height: 46px;
+	display: block;
+}
+
+.hourly-precip {
+	color: #5ac8fa;
+	font-size: 13px;
+	font-weight: 700;
+	line-height: 1;
+	margin-top: 1px;
+}
+
+.hourly-temp {
+	font-size: 22px;
+	font-weight: 700;
+	height: 28px;
+	line-height: 28px;
+	margin-top: 6px;
+}
+
+.hourly-col-sun .hourly-sun-label {
+	font-size: 19px;
+	white-space: nowrap;
+}

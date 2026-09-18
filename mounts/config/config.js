@@ -49,15 +49,18 @@ let config = {
 			}
 		},
 		{
-			module: "weather",
+			module: "MMM-HourlyStrip",
+			position: "bottom_bar",
+			header: "Hourly Forecast",
 			config: {
-				weatherProvider: "openmeteo",
-				type: "hourly",
 				lat: 44.8480,
 				lon: -93.0430,
 				units: "imperial",
-				maxNumberOfDays: 2,
-				updateInterval: 10 * 60 * 1000
+				hoursToShow: 24,
+				showPrecipThreshold: 20,
+				showSunrise: true,
+				showSunset: true,
+				iconStyle: "fill"
 			}
 		},
 		{
