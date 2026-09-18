@@ -465,9 +465,10 @@ Module.register("MMM-VectorRain", {
 		}
 		const isLatest = this.frameIndex === frames.length - 1;
 		const ageMin = Math.max(0, Math.round((Date.now() - frame.time * 1000) / 60000));
+		const ageHM = `${Math.floor(ageMin / 60)}:${String(ageMin % 60).padStart(2, "0")}`;
 		this.timelineLabel.textContent = isLatest
 			? `Now · ${this.formatFrameTime(frame.time)}`
-			: `${this.formatFrameTime(frame.time)} · ${ageMin}m ago`;
+			: `${this.formatFrameTime(frame.time)} · ${ageHM} ago`;
 		const ticks = this.timelineTrack.children;
 		for (let i = 0; i < ticks.length; i += 1) {
 			ticks[i].classList.toggle("vector-tl-active", i <= this.frameIndex);
