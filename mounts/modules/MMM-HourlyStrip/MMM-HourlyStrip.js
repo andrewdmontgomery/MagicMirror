@@ -115,10 +115,10 @@ const ICON_FILES = {
 	heavyRain: "cloud-rain-fill.svg",
 	fog: "cloud-fog-fill.svg",
 	snow: "cloud-snow-fill.svg",
-	thunder: "cloud-bolt-rain-fill.svg",
-	sunrise: "sunrise-fill.svg",
-	sunset: "sunset-fill.svg"
+	thunder: "cloud-bolt-rain-fill.svg"
 };
+/* Note: Phosphor has no sunrise/sunset glyphs — sunColumn() uses the
+ * hand-built sun+arrow icons, which already match this strip. */
 
 Module.register("MMM-HourlyStrip", {
 	defaults: {
@@ -155,7 +155,8 @@ Module.register("MMM-HourlyStrip", {
 			}
 		};
 		files.forEach((file) => {
-			fetch(this.file(`icons/${file}`))
+			// ?v= cache-bust: filenames were reused across icon sets.
+			fetch(this.file(`icons/${file}?v=2`))
 				.then((response) => {
 					if (!response.ok) {
 						throw new Error(response.statusText);
@@ -163,6 +164,11 @@ Module.register("MMM-HourlyStrip", {
 					return response.text();
 				})
 				.then((svg) => {
+					// Never inject error pages as icons (MM answers 200
+					// with a text body for missing module assets).
+					if (!svg.trimStart().startsWith("<svg")) {
+						throw new Error("not an SVG");
+					}
 					this.glyphIcons[file] = svg;
 					maybeRefresh();
 				})
@@ -173,14 +179,15 @@ Module.register("MMM-HourlyStrip", {
 	},
 
 	/* Vendored glyph if loaded, otherwise the hand-built fallback.
-	 * Phosphor glyphs use currentColor, so tint here: yellow sun, white rest. */
+	 * Phosphor glyphs use currentColor, so tint here (yellow sun, white
+	 * rest) and ensure the sizing class is present on the root element. */
 	iconSvg: function (iconFile, fallbackSvg) {
 		const svg = this.glyphIcons[iconFile];
 		if (!svg) {
 			return fallbackSvg;
 		}
 		const color = iconFile === ICON_FILES.sun ? "#FFD60A" : "#FFFFFF";
-		return svg.replace("<svg ", `<svg color="${color}" `);
+		return svg.replace("<svg ", `<svg class="apple-icon-svg" color="${color}" `);
 	},
 
 	getData: function () {
@@ -344,9 +351,7 @@ Module.register("MMM-HourlyStrip", {
 
 		const iconWrap = document.createElement("div");
 		iconWrap.className = "hourly-icon";
-		iconWrap.innerHTML = entry.kind === "sunrise"
-			? this.iconSvg(ICON_FILES.sunrise, hourlySunEventIcon("sunrise"))
-			: this.iconSvg(ICON_FILES.sunset, hourlySunEventIcon("sunset"));
+		iconWrap.innerHTML = hourlySunEventIcon(entry.kind);
 
 		const label = document.createElement("div");
 		label.className = "hourly-temp hourly-sun-label";
