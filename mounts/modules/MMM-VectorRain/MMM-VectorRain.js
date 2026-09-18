@@ -156,6 +156,7 @@ Module.register("MMM-VectorRain", {
 			attributionControl: false
 		});
 		this.map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
+		this.map.addControl(this.resetControl(), "top-right");
 		this.map.on("load", () => {
 			this.collapseAttribution();
 			this.addRadarLayer();
@@ -165,6 +166,37 @@ Module.register("MMM-VectorRain", {
 		});
 	},
 
+	/* Crosshair reset control: jumps back to the configured position. */
+	resetControl: function () {
+		const module = this;
+		return {
+			onAdd: function () {
+				const button = document.createElement("button");
+				button.className = "vector-reset maplibregl-ctrl-icon";
+				button.setAttribute("aria-label", "Reset to home location");
+				button.setAttribute("title", "Reset to home location");
+				button.innerHTML =
+					'<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">' +
+					'<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' +
+					'<circle cx="12" cy="12" r="6"/>' +
+					'<line x1="12" y1="1.5" x2="12" y2="5"/>' +
+					'<line x1="12" y1="19" x2="12" y2="22.5"/>' +
+					'<line x1="1.5" y1="12" x2="5" y2="12"/>' +
+					'<line x1="19" y1="12" x2="22.5" y2="12"/></g>' +
+					'<circle cx="12" cy="12" r="1.6" fill="#fff"/></svg>';
+				button.addEventListener("click", () => {
+					module.positionIndex = 0;
+					module.loopCount = 0;
+					module.applyPosition();
+				});
+				const container = document.createElement("div");
+				container.className = "maplibregl-ctrl maplibregl-ctrl-group vector-reset-wrap";
+				container.appendChild(button);
+				return container;
+			},
+			onRemove: function () {}
+		};
+	},
 	/* Apple-style precipitation legend. Gradient stops sampled from
 	 * RainViewer's Universal Blue scheme (color scheme 2), so the swatch
 	 * means the same thing as the radar cells. */

@@ -123,6 +123,24 @@
 	color: #5ac8fa;
 }
 
+/* Crosshair reset control: dark circle matching the mirror pills. */
+.vector-reset-wrap {
+	background: rgba(0, 0, 0, 0.55);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	border-radius: 50%;
+	overflow: hidden;
+}
+
+.vector-reset-wrap .vector-reset {
+	width: 34px;
+	height: 34px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+}
+
 /* Attribution starts collapsed to just the ⓘ toggle; the full text only
  * shows while expanded (click). The stock compact control renders expanded
  * on this mirror, so enforce the collapsed state here. */
