@@ -226,6 +226,10 @@ Module.register("MMM-VectorRain", {
 		this.addRadarLayer();
 		this.addMarkers();
 		this.frameTimer = setInterval(() => {
+			// Re-attempt layer creation every tick: a single transient
+			// map.loaded()===false at startup orphaned the layer forever.
+			// addRadarLayer is idempotent via its getSource guard.
+			this.addRadarLayer();
 			const prev = this.frameIndex;
 			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
 			if (this.frameIndex === 0) {
