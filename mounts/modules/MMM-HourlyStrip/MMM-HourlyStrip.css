@@ -44,7 +44,7 @@
 
 .hourly-col {
 	flex: 0 0 auto;
-	min-width: 68px;
+	min-width: 78px;
 	text-align: center;
 	display: flex;
 	flex-direction: column;
@@ -60,7 +60,7 @@
 }
 
 .hourly-icon {
-	height: 34px;
+	height: 46px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
@@ -68,8 +68,8 @@
 
 .hourly-icon-svg,
 .apple-icon-svg {
-	width: 44px;
-	height: 34px;
+	width: 58px;
+	height: 46px;
 	display: block;
 }
 
