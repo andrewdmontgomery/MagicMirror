@@ -1,0 +1,8 @@
+{
+	"name": "magicmirror-config",
+	"private": true,
+	"description": "Docker-mounted MagicMirror config and first-party modules.",
+	"scripts": {
+		"test": "node --test mounts/modules/MMM-HourlyStrip/tests/unit/*.test.js mounts/modules/MMM-VectorRain/tests/unit/*.test.js"
+	}
+}
