@@ -59,7 +59,9 @@
 	display: flex;
 	gap: 10px;
 	align-items: center;
-	background: rgba(0, 0, 0, 0.55);
+	background: rgba(0, 0, 0, 0.45);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
 	border-radius: 12px;
 	padding: 8px 12px;
 	color: #fff;
