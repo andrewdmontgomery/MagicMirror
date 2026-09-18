@@ -209,13 +209,14 @@ Module.register("MMM-VectorRain", {
 			}
 		});
 		this.map.addLayer({
-			id: "markers-halo",
+			id: "markers-shadow",
 			type: "circle",
 			source: "markers",
 			paint: {
-				"circle-radius": 11,
+				"circle-radius": 8,
 				"circle-color": "#000000",
-				"circle-opacity": 0.55
+				"circle-opacity": 0.35,
+				"circle-translate": [1, 2]
 			}
 		});
 		this.map.addLayer({
@@ -223,17 +224,17 @@ Module.register("MMM-VectorRain", {
 			type: "circle",
 			source: "markers",
 			paint: {
-				"circle-radius": 7,
+				"circle-radius": 5.5,
 				"circle-opacity": 1,
 				"circle-color": ["get", "color"],
 				"circle-stroke-color": "#ffffff",
-				"circle-stroke-width": 3,
+				"circle-stroke-width": 2.5,
 				"circle-stroke-opacity": 1
 			}
 		});
 		// Radar layers may land above the markers when frames arrive after
 		// map load — pin markers to the top so the home dot stays opaque.
-		this.map.moveLayer("markers-halo");
+		this.map.moveLayer("markers-shadow");
 		this.map.moveLayer("markers");
 	},
 
@@ -310,8 +311,8 @@ Module.register("MMM-VectorRain", {
 				this.map.setPaintProperty(`rainviewer-${this.frameIndex}`, "raster-opacity", this.config.radarOpacity);
 				// Re-pin markers above the radar every tick: belt and
 				// suspenders against any ordering drift.
-				if (this.map.getLayer("markers-halo")) {
-					this.map.moveLayer("markers-halo");
+				if (this.map.getLayer("markers-shadow")) {
+					this.map.moveLayer("markers-shadow");
 				}
 				if (this.map.getLayer("markers")) {
 					this.map.moveLayer("markers");
