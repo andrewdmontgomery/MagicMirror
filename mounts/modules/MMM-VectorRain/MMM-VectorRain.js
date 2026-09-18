@@ -19,7 +19,25 @@ Module.register("MMM-VectorRain", {
 	},
 
 	start: function () {
-		this.loaded = false;
+		this.mapStyle = null;
+		this.styleError = null;
+		this.map = null;
+		this.getStyle();
+	},
+
+	getStyle: function () {
+		this.sendSocketNotification("GET_VECTOR_STYLE", {});
+	},
+
+	socketNotificationReceived: function (notification, payload) {
+		if (notification === "VECTOR_STYLE_RESULT") {
+			if (payload && payload.style) {
+				this.mapStyle = payload.style;
+			} else {
+				this.styleError = (payload && payload.error) || "Style fetch failed.";
+			}
+			this.updateDom(this.config.animationSpeed);
+		}
 	},
 
 	getScripts: function () {
@@ -40,12 +58,46 @@ Module.register("MMM-VectorRain", {
 			return wrapper;
 		}
 
-		if (!this.loaded) {
+		if (this.styleError) {
+			wrapper.className = "vector-rain-module dimmed light small";
+			wrapper.textContent = this.styleError;
+			return wrapper;
+		}
+
+		if (!this.mapStyle) {
 			wrapper.className = "vector-rain-module dimmed light small";
 			wrapper.innerHTML = "Loading vector rain map &hellip;";
 			return wrapper;
 		}
 
+		const mapDiv = document.createElement("div");
+		mapDiv.className = "vector-rain-map";
+		mapDiv.style.width = this.config.mapWidth;
+		mapDiv.style.height = this.config.mapHeight;
+		wrapper.appendChild(mapDiv);
+
+		// Drop any previous map (updateDom replaces the container).
+		if (this.map) {
+			this.map.remove();
+			this.map = null;
+		}
+		// Init after insert so the container has dimensions.
+		setTimeout(() => this.initMap(mapDiv), 0);
+
 		return wrapper;
+	},
+
+	initMap: function (container) {
+		if (this.map || !this.mapStyle) {
+			return;
+		}
+		this.map = new maplibregl.Map({
+			container,
+			style: this.mapStyle,
+			center: [this.config.lon, this.config.lat],
+			zoom: this.config.defaultZoomLevel,
+			interactive: false,
+			attributionControl: { compact: true }
+		});
 	}
 });
