@@ -14,7 +14,9 @@
 	top: 10px;
 	left: 10px;
 	z-index: 5;
-	background: rgba(0, 0, 0, 0.55);
+	background: rgba(0, 0, 0, 0.45);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
 	border-radius: 12px;
 	padding: 10px 12px;
 	color: #fff;
