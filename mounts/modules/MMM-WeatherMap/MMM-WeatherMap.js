@@ -1,13 +1,12 @@
-/* MMM-VectorRain — vector rain radar on a CARTO dark basemap (MapLibre GL).
- * Standalone replacement candidate for MMM-RAIN-MAP; that module is left
- * untouched (see docs/plans/2026-09-18-vector-rain-map.md).
+/* MMM-WeatherMap — animated weather map on a CARTO dark basemap (MapLibre GL):
+ * rain radar, wind particles, history/future timeline.
  */
 
 /* Frame-layer ceiling: RainViewer serves ~13 past frames; anything beyond
  * this is a runaway, not data. Used only to bound teardownRadar's sweep. */
 const MAX_RADAR_LAYERS = 64;
 
-Module.register("MMM-VectorRain", {
+Module.register("MMM-WeatherMap", {
 	defaults: {
 		mapWidth: "420px",
 		mapHeight: "420px",
@@ -90,23 +89,23 @@ Module.register("MMM-VectorRain", {
 		// does not resolve. Same for the worker URL below.
 		const libUrl = new URL(this.file("vendor/maplibre-gl.mjs"), document.baseURI).href;
 		const workerUrl = new URL(this.file("vendor/maplibre-gl-worker.mjs"), document.baseURI).href;
-		Log.log(`[MMM-VectorRain] importing map library from ${libUrl}`);
+		Log.log(`[MMM-WeatherMap] importing map library from ${libUrl}`);
 		import(libUrl)
 			.then((lib) => {
-				Log.log("[MMM-VectorRain] library imported, setting worker URL");
+				Log.log("[MMM-WeatherMap] library imported, setting worker URL");
 				lib.setWorkerUrl(workerUrl);
 				this.maplibre = lib;
 				this.updateDom();
 			})
 			.catch((error) => {
-				Log.error("[MMM-VectorRain] library import failed", error);
+				Log.error("[MMM-WeatherMap] library import failed", error);
 				this.libError = true;
 				this.updateDom();
 			});
 	},
 
 	getStyles: function () {
-		return [this.file("vendor/maplibre-gl.css"), "MMM-VectorRain.css"];
+		return [this.file("vendor/maplibre-gl.css"), "MMM-WeatherMap.css"];
 	},
 
 	getDom: function () {
@@ -133,7 +132,7 @@ Module.register("MMM-VectorRain", {
 
 		if (!this.mapStyle) {
 			wrapper.className = "vector-rain-module dimmed light small";
-			wrapper.innerHTML = "Loading vector rain map &hellip;";
+			wrapper.innerHTML = "Loading weather map &hellip;";
 			return wrapper;
 		}
 

@@ -1,5 +1,5 @@
-/* MMM-VectorRain unit tests — pure logic only (no DOM, no map, no timers).
- * Run: node --test mounts/modules/MMM-VectorRain/tests/unit/
+/* MMM-WeatherMap unit tests — pure logic only (no DOM, no map, no timers).
+ * Run: node --test mounts/modules/MMM-WeatherMap/tests/unit/
  */
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
@@ -10,7 +10,7 @@ const MODULE_DIR = path.resolve(__dirname, "..", "..");
 function loadFrontend() {
 	let registered = null;
 	global.Module = { register: (name, def) => { registered = def; } };
-	require(path.join(MODULE_DIR, "MMM-VectorRain.js"));
+	require(path.join(MODULE_DIR, "MMM-WeatherMap.js"));
 	delete global.Module;
 	return registered;
 }

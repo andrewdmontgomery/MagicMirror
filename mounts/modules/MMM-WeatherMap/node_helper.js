@@ -1,4 +1,4 @@
-/* MMM-VectorRain node_helper — server-side fetches keep the CARTO API key
+/* MMM-WeatherMap node_helper — server-side fetches keep the CARTO API key
  * out of the browser bundle. Key comes from SECRET_CARTO_API_KEY (.env).
  */
 const NodeHelper = require("node_helper");
@@ -31,7 +31,7 @@ module.exports = NodeHelper.create({
 			const style = await response.json();
 			this.sendSocketNotification("VECTOR_STYLE_RESULT", { style });
 		} catch (error) {
-			console.error("MMM-VectorRain: failed to fetch vector style", error);
+			console.error("MMM-WeatherMap: failed to fetch vector style", error);
 			this.sendSocketNotification("VECTOR_STYLE_RESULT", {
 				error: "Failed to fetch CARTO vector style (see container logs)."
 			});
@@ -51,7 +51,7 @@ module.exports = NodeHelper.create({
 				frames: past.map((frame) => ({ time: frame.time, path: frame.path }))
 			});
 		} catch (error) {
-			console.error("MMM-VectorRain: failed to fetch radar frames", error);
+			console.error("MMM-WeatherMap: failed to fetch radar frames", error);
 		}
 	}
 });

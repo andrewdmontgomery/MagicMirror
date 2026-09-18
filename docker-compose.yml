@@ -14,6 +14,6 @@ services:
       - ./mounts/modules/MMM-WindCompass:/opt/magic_mirror/modules/MMM-WindCompass
       - ./mounts/modules/MMM-RainWatcher:/opt/magic_mirror/modules/MMM-RainWatcher
       - ./mounts/modules/MMM-HourlyStrip:/opt/magic_mirror/modules/MMM-HourlyStrip
-      - ./mounts/modules/MMM-VectorRain:/opt/magic_mirror/modules/MMM-VectorRain
+      - ./mounts/modules/MMM-WeatherMap:/opt/magic_mirror/modules/MMM-WeatherMap
     ports:
       - "8080:8080"

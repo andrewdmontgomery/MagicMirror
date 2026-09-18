@@ -1,5 +1,5 @@
-/* MMM-VectorRain node_helper tests — request shape and payload mapping.
- * Run: node --test mounts/modules/MMM-VectorRain/tests/unit/
+/* MMM-WeatherMap node_helper tests — request shape and payload mapping.
+ * Run: node --test mounts/modules/MMM-WeatherMap/tests/unit/
  */
 const { describe, it, beforeEach, afterEach } = require("node:test");
 const assert = require("node:assert/strict");
