@@ -101,7 +101,12 @@ git commit -m "feat: render CARTO vector basemap with server-side key"
 git commit -m "feat: animate RainViewer radar over vector basemap"
 ```
 
-## Phase 5 — Parity + cutover
+## Phase 5 — Parity + cutover (done 2026-09-18)
+
+Deferred: vendored `mirror-dark.json` custom style — stock dark-matter
+accepted as-is after visual review. The rest shipped: markers, position
+cycling, RainWatcher repoint, old map `disabled: true` (code + mount
+untouched, one-line rollback).
 
 ### Task 6: Markers, positions, mirror-tuned style
 
