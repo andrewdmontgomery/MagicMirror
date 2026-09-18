@@ -10,6 +10,7 @@ A Docker-based configuration setup for [MagicMirror²](https://docs.magicmirror.
 
 - Start the mirror: `docker compose up -d`
 - **Apply any change to `mounts/config/config.js` or a module**: `docker compose restart magicmirror` — MagicMirror does not hot-reload config or module code, a restart is required after every edit.
+- **After changing `docker-compose.yml` itself (e.g. adding a volume mount)**: `docker compose down && docker compose up -d` — `restart` reuses the existing container and silently ignores new mounts, which leaves the new mountpoint as an empty dir inside the container (module JS then 404s and the module renders nothing).
 - Check for startup/runtime errors: `docker compose logs --tail=50 magicmirror`
 - Stop: `docker compose down`
 - View the mirror: `http://localhost:8080` (runs in server-only mode — no Electron/kiosk display needed on the host; any browser works)
