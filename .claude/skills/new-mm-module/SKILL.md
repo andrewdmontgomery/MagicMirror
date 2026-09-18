@@ -98,10 +98,11 @@ Four lessons from MMM-VectorRain, learned the hard way:
    a bare `"vendor/lib.js"` loads as `/vendor/lib.js` (404). Always write
    `this.file("vendor/lib.js")`, which expands to
    `modules/<MMM-Name>/vendor/lib.js`.
-2. **Vendor UMD builds, not ESM.** `getScripts()` injects classic scripts, so
-   the library must expose a global. MapLibre 4.7.1 was pinned specifically
-   because it's the last line shipping UMD (`dist/maplibre-gl.js`); v5+ is
-   ESM-only and won't load this way.
+2. **Vendor libraries that expose a global (UMD), not ESM-only builds.**
+   `getScripts()` injects classic scripts, so the library must assign a
+   `window` global to be usable. Check the package's `dist/` for a UMD file
+   and pin to a line that still ships one — e.g. MapLibre GL v5+ is ESM-only
+   and won't load this way, so 4.7.1 was pinned for its UMD build.
 3. **Validate fetched asset bodies.** MagicMirror answers HTTP 200 with a
    `404: Not Found` text body for missing module assets, so `response.ok`
    is not enough — check the content (e.g. `text.trimStart().startsWith("<svg")`)
