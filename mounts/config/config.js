@@ -99,7 +99,7 @@ let config = {
 					{ lat: 44.8480, lng: -93.0430, color: "red" }
 				],
 				provider: "rainviewer",
-				radarOpacity: 0.7,
+				radarOpacity: 0.45,
 				// CARTO dark tiles when a key is present locally (.env),
 				// keyless Esri dark-gray otherwise — never commit a key here.
 				mapUrl: process.env.SECRET_CARTO_API_KEY
