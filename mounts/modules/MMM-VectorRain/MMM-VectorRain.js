@@ -191,20 +191,25 @@ Module.register("MMM-VectorRain", {
 	},
 
 	addRadarLayer: function () {
-		if (!this.map || !this.map.loaded() || !this.frames || this.map.getSource("rainviewer")) {
+		if (!this.map || !this.map.loaded() || !this.frames || this.map.getSource("rainviewer-0")) {
 			return;
 		}
-		const first = this.frames.frames[this.frameIndex % this.frames.frames.length];
-		this.map.addSource("rainviewer", {
-			type: "raster",
-			tiles: [this.frameTileUrl(first)],
-			tileSize: 256
-		});
-		this.map.addLayer({
-			id: "rainviewer",
-			type: "raster",
-			source: "rainviewer",
-			paint: { "raster-opacity": this.config.radarOpacity }
+		// One raster layer per frame; the tick toggles visibility instead
+		// of swapping tile URLs, so frames preload and never flicker.
+		this.frames.frames.forEach((frame, i) => {
+			const id = `rainviewer-${i}`;
+			this.map.addSource(id, {
+				type: "raster",
+				tiles: [this.frameTileUrl(frame)],
+				tileSize: 256
+			});
+			this.map.addLayer({
+				id,
+				type: "raster",
+				source: id,
+				layout: { visibility: i === this.frameIndex ? "visible" : "none" },
+				paint: { "raster-opacity": this.config.radarOpacity }
+			});
 		});
 	},
 
@@ -221,6 +226,7 @@ Module.register("MMM-VectorRain", {
 		this.addRadarLayer();
 		this.addMarkers();
 		this.frameTimer = setInterval(() => {
+			const prev = this.frameIndex;
 			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
 			if (this.frameIndex === 0) {
 				// Full radar loop done — advance map position if its loop
@@ -235,9 +241,10 @@ Module.register("MMM-VectorRain", {
 					this.applyPosition();
 				}
 			}
-			const source = this.map && this.map.getSource("rainviewer");
-			if (source) {
-				source.setTiles([this.frameTileUrl(this.frames.frames[this.frameIndex])]);
+			const source = this.map && this.map.getSource(`rainviewer-${this.frameIndex}`);
+			if (this.map && source) {
+				this.map.setLayoutProperty(`rainviewer-${prev}`, "visibility", "none");
+				this.map.setLayoutProperty(`rainviewer-${this.frameIndex}`, "visibility", "visible");
 			}
 		}, this.config.animationSpeedMs);
 	}
