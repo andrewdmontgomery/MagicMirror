@@ -114,7 +114,6 @@ let config = {
 			module: "MMM-VectorRain",
 			position: "bottom_left",
 			header: "Rain Map (Vector)",
-			hiddenOnStartup: true,
 			config: {
 				lat: 44.8480,
 				lon: -93.0430
