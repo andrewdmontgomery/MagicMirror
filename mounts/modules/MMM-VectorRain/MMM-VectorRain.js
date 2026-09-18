@@ -125,6 +125,9 @@ Module.register("MMM-VectorRain", {
 			style: this.mapStyle,
 			center: [this.config.lon, this.config.lat],
 			zoom: this.config.defaultZoomLevel,
+			// RainViewer serves radar tiles only to zoom 7 — anything
+			// higher renders as "Zoom Level Not Supported" tiles.
+			maxZoom: 7,
 			interactive: false,
 			attributionControl: { compact: true }
 		});
@@ -186,8 +189,9 @@ Module.register("MMM-VectorRain", {
 	},
 
 	frameTileUrl: function (frame) {
-		// RainViewer free API: color scheme 2 (Universal Blue), smooth+snow 1_1.
-		return `${this.frames.host}${frame.path}/256/{z}/{x}/{y}/2/1_1.png`;
+		// RainViewer free API: max zoom 7, color scheme 2 (Universal Blue),
+		// smooth+snow 1_1. 512px tiles stay sharp on the mirror.
+		return `${this.frames.host}${frame.path}/512/{z}/{x}/{y}/2/1_1.png`;
 	},
 
 	addRadarLayer: function () {
@@ -201,7 +205,7 @@ Module.register("MMM-VectorRain", {
 			this.map.addSource(id, {
 				type: "raster",
 				tiles: [this.frameTileUrl(frame)],
-				tileSize: 256
+				tileSize: 512
 			});
 			this.map.addLayer({
 				id,
