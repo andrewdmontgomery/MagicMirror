@@ -87,6 +87,7 @@ let config = {
 			position: "bottom_left",
 			header: "Rain Map",
 			hiddenOnStartup: true,
+			disabled: true,
 			config: {
 				displayHoursBeforeRain: -1,
 				mapWidth: "420px",
@@ -113,7 +114,8 @@ let config = {
 		{
 			module: "MMM-VectorRain",
 			position: "bottom_left",
-			header: "Rain Map (Vector)",
+			header: "Rain Map",
+			hiddenOnStartup: true,
 			config: {
 				lat: 44.8480,
 				lon: -93.0430,
@@ -129,7 +131,7 @@ let config = {
 		{
 			module: "MMM-RainWatcher",
 			config: {
-				targetModule: "MMM-RAIN-MAP",
+				targetModule: "MMM-VectorRain",
 				forecastHours: 12,
 				rainProbabilityThreshold: 30,
 				rainAmountThreshold: 0.3
