@@ -24,7 +24,9 @@ Module.register("MMM-VectorRain", {
 		this.mapStyle = null;
 		this.styleError = null;
 		this.map = null;
-		this.libRetries = 0;
+		this.maplibre = null;
+		this.libAttempted = false;
+		this.libError = null;
 		this.frames = null;
 		this.frameIndex = 0;
 		this.positionIndex = 0;
@@ -71,8 +73,28 @@ Module.register("MMM-VectorRain", {
 		}
 	},
 
-	getScripts: function () {
-		return [this.file("vendor/maplibre-gl.js")];
+	/* MapLibre v6+ ships ESM only (no global build): single attempted
+	 * dynamic import, worker pointed at the vendored file. Exactly one
+	 * attempt ever — no retry loops that can wedge the page. */
+	loadMapLibre: function () {
+		if (this.libAttempted) {
+			return;
+		}
+		this.libAttempted = true;
+		const url = this.file("vendor/maplibre-gl.mjs");
+		Log.log(`[MMM-VectorRain] importing map library from ${url}`);
+		import(url)
+			.then((lib) => {
+				Log.log("[MMM-VectorRain] library imported, setting worker URL");
+				lib.setWorkerUrl(this.file("vendor/maplibre-gl-worker.mjs"));
+				this.maplibre = lib;
+				this.updateDom();
+			})
+			.catch((error) => {
+				Log.error("[MMM-VectorRain] library import failed", error);
+				this.libError = true;
+				this.updateDom();
+			});
 	},
 
 	getStyles: function () {
@@ -83,18 +105,15 @@ Module.register("MMM-VectorRain", {
 		const wrapper = document.createElement("div");
 		wrapper.className = "vector-rain-module";
 
-		if (typeof maplibregl === "undefined") {
-			// Vendor script (803KB) may still be loading when getDom first
-			// runs — retry a few times before declaring failure.
-			if (this.libRetries < 20) {
-				this.libRetries += 1;
-				setTimeout(() => this.updateDom(), 500);
+		if (!this.maplibre) {
+			this.loadMapLibre();
+			if (this.libError) {
 				wrapper.className = "vector-rain-module dimmed light small";
-				wrapper.innerHTML = "Loading map library &hellip;";
+				wrapper.innerHTML = "Map library failed to load &hellip;";
 				return wrapper;
 			}
 			wrapper.className = "vector-rain-module dimmed light small";
-			wrapper.innerHTML = "Map library failed to load &hellip;";
+			wrapper.innerHTML = "Loading map library &hellip;";
 			return wrapper;
 		}
 
@@ -140,7 +159,7 @@ Module.register("MMM-VectorRain", {
 		if (this.map || !this.mapStyle) {
 			return;
 		}
-		this.map = new maplibregl.Map({
+		this.map = new this.maplibre.Map({
 			container,
 			style: this.mapStyle,
 			center: [this.config.lon, this.config.lat],
