@@ -42,11 +42,11 @@ Module.register("MMM-VectorRain", {
 	},
 
 	getScripts: function () {
-		return ["vendor/maplibre-gl.js"];
+		return [this.file("vendor/maplibre-gl.js")];
 	},
 
 	getStyles: function () {
-		return ["vendor/maplibre-gl.css", "MMM-VectorRain.css"];
+		return [this.file("vendor/maplibre-gl.css"), "MMM-VectorRain.css"];
 	},
 
 	getDom: function () {
