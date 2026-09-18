@@ -85,7 +85,7 @@ let config = {
 		{
 			module: "MMM-WeatherMap",
 			position: "bottom_left",
-			header: "Rain Map",
+			header: "Weather Map",
 			hiddenOnStartup: true,
 			config: {
 				lat: 44.8480,
