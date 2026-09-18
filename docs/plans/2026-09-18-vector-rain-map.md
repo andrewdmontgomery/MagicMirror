@@ -7,8 +7,8 @@
 **Tech Stack:** MapLibre GL JS 4.7.1 UMD (vendored, BSD-3-Clause), CARTO vector basemaps (keyed, free tier), RainViewer raster tiles, Open-Meteo unchanged.
 
 **Spike results (verified 2026-09-18):**
-- Radar tiles: `{host}/v2/radar/{id}/256/{z}/{x}/{y}/2/1_1.png` returns HTTP 200 PNG — overlay as a MapLibre `raster` source, cycle `setTiles()` per frame.
-- MapLibre: pin **4.7.1**, the last line shipping a UMD `dist/maplibre-gl.js` global build (loads via MM `getScripts`). v5/v6 are ESM-only and would need dynamic-import surgery — not worth it.
+- Radar tiles: `{host}/v2/radar/{id}/256/{z}/{x}/{y}/2/1_1.png` returns HTTP 200 PNG — overlay as a MapLibre `raster` source, cycle per-frame layers with opacity (crossfades, no flicker).
+- MapLibre: **6.10.0 ESM** via dynamic `import()` with `setWorkerUrl()` pointed at the vendored worker (absolute URLs — Safari rejects relative ones). v4 UMD was a stepping stone; ESM needs no bundler since everything is same-origin. Data-driven `["get"]` paint tripped v6's stricter validator — marker color is a JS-resolved literal now.
 
 ---
 
