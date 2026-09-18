@@ -22,7 +22,6 @@ Module.register("MMM-VectorRain", {
 		this.mapStyle = null;
 		this.styleError = null;
 		this.map = null;
-		this.pinMarkers = [];
 		this.libRetries = 0;
 		this.frames = null;
 		this.frameIndex = 0;
@@ -108,7 +107,6 @@ Module.register("MMM-VectorRain", {
 
 		// Drop any previous map (updateDom replaces the container).
 		if (this.map) {
-			this.removeMarkers();
 			this.map.remove();
 			this.map = null;
 		}
@@ -165,37 +163,35 @@ Module.register("MMM-VectorRain", {
 	},
 
 	addMarkers: function () {
-		if (!this.map || !this.map.loaded()) {
+		if (!this.map || !this.map.loaded() || this.map.getSource("markers")) {
 			return;
 		}
-		this.removeMarkers();
 		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
-		this.pinMarkers = markers.map((m) => {
-			const el = document.createElement("div");
-			el.className = "vector-pin";
-			el.innerHTML = this.pinSvg(m.color || "red");
-			const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
-				.setLngLat([m.lng, m.lat])
-				.addTo(this.map);
-			return marker;
+		this.map.addSource("markers", {
+			type: "geojson",
+			data: {
+				type: "FeatureCollection",
+				features: markers.map((m) => ({
+					type: "Feature",
+					geometry: { type: "Point", coordinates: [m.lng, m.lat] },
+					properties: { color: m.color || "red" }
+				}))
+			}
 		});
-	},
-
-	removeMarkers: function () {
-		(this.pinMarkers || []).forEach((marker) => marker.remove());
-		this.pinMarkers = [];
-	},
-
-	/* Classic map pin as inline SVG (no asset files): colored teardrop
-	 * with a darker inner ring and a transparent center hole. Rendered
-	 * as a DOM marker so it always sits above the radar canvas. */
-	pinSvg: function (color) {
-		return `<svg viewBox="0 0 56 84" width="45" height="67" aria-hidden="true">` +
-			`<g style="filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.5));">` +
-			`<path fill-rule="evenodd" fill="${color}" d="M28 80 L9.6 35 A20 20 0 0 0 46.4 35 Z ` +
-			`M21.6 26 a6.4 6.4 0 1 0 12.8 0 a6.4 6.4 0 1 0 -12.8 0"/>` +
-			`<circle cx="28" cy="26" r="12.4" fill="none" stroke="rgba(0, 0, 0, 0.25)" stroke-width="6"/>` +
-			`</g></svg>`;
+		this.map.addLayer({
+			id: "markers",
+			type: "circle",
+			source: "markers",
+			paint: {
+				"circle-radius": 6,
+				"circle-color": ["get", "color"],
+				"circle-stroke-color": "#ffffff",
+				"circle-stroke-width": 2
+			}
+		});
+		// Radar layers may land above the markers when frames arrive after
+		// map load — pin markers to the top so the home dot stays opaque.
+		this.map.moveLayer("markers");
 	},
 
 	frameTileUrl: function (frame) {
