@@ -15,6 +15,7 @@ Module.register("MMM-VectorRain", {
 		radarOpacity: 0.45,
 		animationSpeedMs: 800,
 		showLegend: true,
+		showTimeline: true,
 		updateInterval: 10 * 60 * 1000,
 		animationSpeed: 1000
 	},
@@ -29,6 +30,8 @@ Module.register("MMM-VectorRain", {
 		this.positionIndex = 0;
 		this.loopCount = 0;
 		this.frameTimer = null;
+		this.playing = true;
+		this.framesKey = null;
 		this.getStyle();
 		this.getFrames();
 		setInterval(() => {
@@ -54,6 +57,13 @@ Module.register("MMM-VectorRain", {
 			this.updateDom(this.config.animationSpeed);
 		} else if (notification === "VECTOR_FRAMES_RESULT") {
 			if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
+				const key = `${payload.frames[0].time}-${payload.frames[payload.frames.length - 1].time}`;
+				if (this.framesKey !== key) {
+					// New frame set: drop stale radar layers so tiles can't
+					// go missing after a refresh.
+					this.teardownRadar();
+					this.framesKey = key;
+				}
 				this.frames = payload;
 				this.frameIndex = 0;
 				this.restartAnimation();
@@ -108,6 +118,10 @@ Module.register("MMM-VectorRain", {
 
 		if (this.config.showLegend) {
 			mapDiv.appendChild(this.legendDiv());
+		}
+
+		if (this.config.showTimeline) {
+			mapDiv.appendChild(this.timelineDiv());
 		}
 
 		// Drop any previous map (updateDom replaces the container).
@@ -266,6 +280,10 @@ Module.register("MMM-VectorRain", {
 		// vice versa) — ensure the layers exist before animating.
 		this.addRadarLayer();
 		this.addMarkers();
+		this.showFrame(this.frameIndex, true);
+		if (!this.playing) {
+			return;
+		}
 		this.frameTimer = setInterval(() => {
 			// Re-attempt layer creation every tick: a single transient
 			// map.loaded()===false at startup orphaned the layer forever.
@@ -291,18 +309,168 @@ Module.register("MMM-VectorRain", {
 					}
 				}
 			}
-			const source = this.map && this.map.getSource(`rainviewer-${this.frameIndex}`);
-			if (this.map && source) {
-				// Opacity (not visibility): transparent layers keep their
-				// tiles loaded, so switching frames never flashes blank.
-				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
-				this.map.setPaintProperty(`rainviewer-${this.frameIndex}`, "raster-opacity", this.config.radarOpacity);
-				// Re-pin markers above the radar every tick: belt and
-				// suspenders against any ordering drift.
-				if (this.map.getLayer("markers")) {
-					this.map.moveLayer("markers");
-				}
-			}
+			this.showFrame(this.frameIndex, false, prev);
 		}, this.config.animationSpeedMs);
+	},
+
+	/* Drop all radar layers/sources (fresh frame set on refresh). */
+	teardownRadar: function () {
+		if (!this.map) {
+			return;
+		}
+		for (let i = 0; i < 64; i += 1) {
+			const id = `rainviewer-${i}`;
+			if (!this.map.getSource(id)) {
+				break;
+			}
+			if (this.map.getLayer(id)) {
+				this.map.removeLayer(id);
+			}
+			this.map.removeSource(id);
+		}
+	},
+
+	/* Display one frame: paint swap plus timeline label + progress. */
+	showFrame: function (index, skipPaint, prev) {
+		this.frameIndex = index;
+		if (!skipPaint && this.map && this.map.getSource(`rainviewer-${index}`)) {
+			if (prev !== undefined && this.map.getSource(`rainviewer-${prev}`)) {
+				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
+			}
+			// Opacity (not visibility): transparent layers keep their
+			// tiles loaded, so switching frames never flashes blank.
+			this.map.setPaintProperty(`rainviewer-${index}`, "raster-opacity", this.config.radarOpacity);
+			// Re-pin markers above the radar on every frame: belt and
+			// suspenders against any ordering drift.
+			if (this.map.getLayer("markers")) {
+				this.map.moveLayer("markers");
+			}
+		}
+		this.updateTimeline();
+	},
+
+	togglePlay: function () {
+		this.playing = !this.playing;
+		this.updatePlayButton();
+		if (this.playing) {
+			this.restartAnimation();
+		} else if (this.frameTimer) {
+			clearInterval(this.frameTimer);
+			this.frameTimer = null;
+		}
+	},
+
+	scrubTo: function (ratio) {
+		if (!this.frames) {
+			return;
+		}
+		const index = Math.min(
+			this.frames.frames.length - 1,
+			Math.max(0, Math.round(ratio * (this.frames.frames.length - 1)))
+		);
+		if (this.playing) {
+			this.togglePlay();
+		}
+		const prev = this.frameIndex;
+		this.showFrame(index, false, prev);
+	},
+
+	formatFrameTime: function (unixSeconds) {
+		const date = new Date(unixSeconds * 1000);
+		let hours = date.getHours();
+		const minutes = String(date.getMinutes()).padStart(2, "0");
+		const ampm = hours >= 12 ? "PM" : "AM";
+		hours = hours % 12 || 12;
+		return `${hours}:${minutes} ${ampm}`;
+	},
+
+	/* Apple-style history timeline: play/pause, current frame time with
+	 * age, and a scrubbable track. Free RainViewer has past frames only,
+	 * so this covers history, not forecast. */
+	timelineDiv: function () {
+		const timeline = document.createElement("div");
+		timeline.className = "vector-timeline";
+
+		this.playButton = document.createElement("button");
+		this.playButton.className = "vector-tl-play";
+		this.playButton.setAttribute("aria-label", "Play or pause radar animation");
+		this.updatePlayButton();
+		this.playButton.addEventListener("click", () => this.togglePlay());
+		timeline.appendChild(this.playButton);
+
+		const main = document.createElement("div");
+		main.className = "vector-tl-main";
+
+		this.timelineLabel = document.createElement("div");
+		this.timelineLabel.className = "vector-tl-label light";
+		main.appendChild(this.timelineLabel);
+
+		this.timelineTrack = document.createElement("div");
+		this.timelineTrack.className = "vector-tl-track";
+		this.timelineTrack.addEventListener("click", (event) => {
+			const rect = this.timelineTrack.getBoundingClientRect();
+			this.scrubTo((event.clientX - rect.left) / rect.width);
+		});
+		main.appendChild(this.timelineTrack);
+
+		this.timelineTicks = document.createElement("div");
+		this.timelineTicks.className = "vector-tl-ticks light";
+		main.appendChild(this.timelineTicks);
+
+		timeline.appendChild(main);
+		this.buildTimelineTicks();
+		this.updateTimeline();
+		return timeline;
+	},
+
+	updatePlayButton: function () {
+		if (this.playButton) {
+			this.playButton.textContent = this.playing ? "❚❚" : "▶";
+		}
+	},
+
+	buildTimelineTicks: function () {
+		if (!this.timelineTicks || !this.frames) {
+			return;
+		}
+		this.timelineTicks.innerHTML = "";
+		this.timelineTrack.innerHTML = "";
+		const frames = this.frames.frames;
+		frames.forEach((frame, i) => {
+			const tick = document.createElement("div");
+			tick.className = "vector-tl-tick";
+			this.timelineTrack.appendChild(tick);
+			const label = document.createElement("span");
+			if (i === frames.length - 1) {
+				label.textContent = "Now";
+				label.className = "vector-tl-now";
+			} else if (i % 4 === 0) {
+				label.textContent = this.formatFrameTime(frame.time);
+			}
+			this.timelineTicks.appendChild(label);
+		});
+	},
+
+	updateTimeline: function () {
+		if (!this.frames || !this.timelineLabel) {
+			return;
+		}
+		if (!this.timelineTicks.hasChildNodes()) {
+			this.buildTimelineTicks();
+		}
+		const frames = this.frames.frames;
+		const frame = frames[this.frameIndex];
+		if (!frame) {
+			return;
+		}
+		const isLatest = this.frameIndex === frames.length - 1;
+		const ageMin = Math.max(0, Math.round((Date.now() - frame.time * 1000) / 60000));
+		this.timelineLabel.textContent = isLatest
+			? `Now · ${this.formatFrameTime(frame.time)}`
+			: `${this.formatFrameTime(frame.time)} · ${ageMin}m ago`;
+		const ticks = this.timelineTrack.children;
+		for (let i = 0; i < ticks.length; i += 1) {
+			ticks[i].classList.toggle("vector-tl-active", i <= this.frameIndex);
+		}
 	}
 });

@@ -49,6 +49,76 @@
 	white-space: nowrap;
 }
 
+/* Apple-style history timeline (past frames only). */
+.vector-timeline {
+	position: absolute;
+	left: 10px;
+	right: 10px;
+	bottom: 10px;
+	z-index: 5;
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	background: rgba(0, 0, 0, 0.55);
+	border-radius: 12px;
+	padding: 8px 12px;
+	color: #fff;
+}
+
+.vector-tl-play {
+	flex: 0 0 auto;
+	width: 34px;
+	height: 34px;
+	border-radius: 50%;
+	border: 1px solid rgba(255, 255, 255, 0.35);
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.vector-tl-main {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.vector-tl-label {
+	font-size: 14px;
+	font-weight: 700;
+	margin-bottom: 6px;
+	white-space: nowrap;
+}
+
+.vector-tl-track {
+	display: flex;
+	gap: 3px;
+	height: 8px;
+	cursor: pointer;
+}
+
+.vector-tl-tick {
+	flex: 1 1 auto;
+	border-radius: 2px;
+	background: rgba(255, 255, 255, 0.22);
+}
+
+.vector-tl-tick.vector-tl-active {
+	background: #fff;
+}
+
+.vector-tl-ticks {
+	display: flex;
+	justify-content: space-between;
+	font-size: 11px;
+	margin-top: 4px;
+	white-space: nowrap;
+}
+
+.vector-tl-now {
+	font-weight: 700;
+	color: #5ac8fa;
+}
+
 /* Attribution starts collapsed to just the ⓘ toggle; the full text only
  * shows while expanded (click). The stock compact control renders expanded
  * on this mirror, so enforce the collapsed state here. */
