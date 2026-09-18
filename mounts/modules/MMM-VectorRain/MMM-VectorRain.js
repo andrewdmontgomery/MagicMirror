@@ -209,18 +209,31 @@ Module.register("MMM-VectorRain", {
 			}
 		});
 		this.map.addLayer({
+			id: "markers-halo",
+			type: "circle",
+			source: "markers",
+			paint: {
+				"circle-radius": 11,
+				"circle-color": "#000000",
+				"circle-opacity": 0.55
+			}
+		});
+		this.map.addLayer({
 			id: "markers",
 			type: "circle",
 			source: "markers",
 			paint: {
-				"circle-radius": 6,
+				"circle-radius": 7,
+				"circle-opacity": 1,
 				"circle-color": ["get", "color"],
 				"circle-stroke-color": "#ffffff",
-				"circle-stroke-width": 2
+				"circle-stroke-width": 3,
+				"circle-stroke-opacity": 1
 			}
 		});
 		// Radar layers may land above the markers when frames arrive after
 		// map load — pin markers to the top so the home dot stays opaque.
+		this.map.moveLayer("markers-halo");
 		this.map.moveLayer("markers");
 	},
 
