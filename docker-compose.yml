@@ -5,6 +5,10 @@ services:
     restart: unless-stopped
     environment:
       - MM_SCENARIO=server
+    # Local secrets (CARTO key etc.). Copy .env.example to .env and fill in
+    # values — .env is gitignored and never committed.
+    env_file:
+      - .env
     volumes:
       - ./mounts/config:/opt/magic_mirror/config
       - ./mounts/modules/MMM-WindCompass:/opt/magic_mirror/modules/MMM-WindCompass

@@ -12,6 +12,15 @@ let config = {
 	timeFormat: 12,
 	units: "imperial",
 
+	// Secrets (e.g. SECRET_CARTO_API_KEY) come from the environment — see
+	// .env.example. Values are masked at the /config endpoint.
+	hideConfigSecrets: true,
+
+	// Tile requests carry the CARTO key via the server-side CORS proxy so
+	// the key is substituted server-side and never exposed to the browser.
+	cors: "allowWhitelist",
+	corsDomainWhitelist: ["basemaps.cartocdn.com"],
+
 	modules: [
 		{
 			module: "clock",
@@ -90,7 +99,11 @@ let config = {
 					{ lat: 44.8480, lng: -93.0430, color: "red" }
 				],
 				provider: "rainviewer",
-				mapUrl: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+				// CARTO dark tiles when a key is present locally (.env),
+				// keyless Esri dark-gray otherwise — never commit a key here.
+				mapUrl: process.env.SECRET_CARTO_API_KEY
+					? "/cors?url=https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png?key=${SECRET_CARTO_API_KEY}"
+					: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}",
 				maxHistoryFrames: 6,
 				maxForecastFrames: 0,
 				updateIntervalInSeconds: 600
