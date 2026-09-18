@@ -138,7 +138,7 @@ Module.register("MMM-VectorRain", {
 	},
 
 	addRadarLayer: function () {
-		if (!this.map || !this.frames || this.map.getSource("rainviewer")) {
+		if (!this.map || !this.map.loaded() || !this.frames || this.map.getSource("rainviewer")) {
 			return;
 		}
 		const first = this.frames.frames[this.frameIndex % this.frames.frames.length];
@@ -163,6 +163,9 @@ Module.register("MMM-VectorRain", {
 		if (!this.frames || this.frames.frames.length < 2) {
 			return;
 		}
+		// The map may have finished loading before the frames arrived (or
+		// vice versa) — ensure the layer exists before animating.
+		this.addRadarLayer();
 		this.frameTimer = setInterval(() => {
 			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
 			const source = this.map && this.map.getSource("rainviewer");
