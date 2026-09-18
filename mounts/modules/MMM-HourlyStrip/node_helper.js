@@ -12,7 +12,7 @@ module.exports = NodeHelper.create({
 		const url =
 			"https://api.open-meteo.com/v1/forecast" +
 			`?latitude=${config.lat}&longitude=${config.lon}` +
-			"&hourly=temperature_2m,weather_code,precipitation_probability,is_day" +
+			"&hourly=temperature_2m,weather_code,precipitation_probability,precipitation,is_day" +
 			"&daily=sunrise,sunset" +
 			"&timezone=auto" +
 			`&temperature_unit=${tempUnit}` +

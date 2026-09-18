@@ -11,11 +11,16 @@ const HOURLY_CLOUD_BODY =
 	'<ellipse cx="34" cy="19" rx="7" ry="5.5"/>' +
 	'<rect x="10" y="17.5" width="30" height="7" rx="3.5"/></g>';
 
-const HOURLY_RAIN_LINES =
-	'<g stroke="#5ac8fa" stroke-width="2" stroke-linecap="round">' +
-	'<line x1="17" y1="26" x2="14" y2="31"/>' +
-	'<line x1="25" y1="26" x2="22" y2="31"/>' +
-	'<line x1="33" y1="26" x2="30" y2="31"/></g>';
+const HOURLY_RAIN_LINE_POSITIONS = [
+	'<line x1="17" y1="26" x2="14" y2="31"/>',
+	'<line x1="25" y1="26" x2="22" y2="31"/>',
+	'<line x1="33" y1="26" x2="30" y2="31"/>'
+];
+
+function hourlyRainLines(count) {
+	const lines = HOURLY_RAIN_LINE_POSITIONS.slice(0, Math.max(1, Math.min(3, count))).join("");
+	return `<g stroke="#5ac8fa" stroke-width="2" stroke-linecap="round">${lines}</g>`;
+}
 
 const HOURLY_SUN_RAYS =
 	'<g stroke="#ffd60a" stroke-width="1.8" stroke-linecap="round">' +
@@ -52,8 +57,12 @@ function hourlyCloudyIcon() {
 	return hourlySvg(HOURLY_CLOUD_BODY);
 }
 
-function hourlyRainIcon() {
-	return hourlySvg(HOURLY_CLOUD_BODY + HOURLY_RAIN_LINES);
+function hourlyRainIcon(precipMm) {
+	// Slash count tracks forecast intensity (mm/hr), like Apple:
+	// trace/drizzle = 1, light = 2, moderate+ = 3.
+	const mm = Number(precipMm) || 0;
+	const count = mm >= 0.5 ? 3 : mm >= 0.1 ? 2 : 1;
+	return hourlySvg(HOURLY_CLOUD_BODY + hourlyRainLines(count));
 }
 
 function hourlyThunderIcon() {
@@ -130,7 +139,7 @@ Module.register("MMM-HourlyStrip", {
 		return ["MMM-HourlyStrip.css"];
 	},
 
-	iconForCode: function (code, isDay) {
+	iconForCode: function (code, isDay, precipMm) {
 		if (code === 0) {
 			return isDay ? hourlySunIcon() : hourlyMoonIcon();
 		}
@@ -144,7 +153,7 @@ Module.register("MMM-HourlyStrip", {
 			return hourlyFogIcon();
 		}
 		if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) {
-			return hourlyRainIcon();
+			return hourlyRainIcon(precipMm);
 		}
 		if ((code >= 71 && code <= 77) || code === 85 || code === 86) {
 			return hourlySnowIcon();
@@ -198,6 +207,7 @@ Module.register("MMM-HourlyStrip", {
 				temp: hourly.temperature_2m[i],
 				code: hourly.weather_code[i],
 				precip: hourly.precipitation_probability ? hourly.precipitation_probability[i] : 0,
+				precipMm: hourly.precipitation ? hourly.precipitation[i] : 0,
 				isDay: hourly.is_day ? hourly.is_day[i] === 1 : true
 			});
 		}
@@ -234,7 +244,7 @@ Module.register("MMM-HourlyStrip", {
 
 		const iconWrap = document.createElement("div");
 		iconWrap.className = "hourly-icon";
-		iconWrap.innerHTML = this.iconForCode(entry.code, entry.isDay);
+		iconWrap.innerHTML = this.iconForCode(entry.code, entry.isDay, entry.precipMm);
 
 		col.appendChild(time);
 		col.appendChild(iconWrap);
