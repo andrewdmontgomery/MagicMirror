@@ -18,7 +18,13 @@ const MAX_RADAR_LAYERS = 64;
 const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
-const WIND_PARTICLE_COUNT = 250;
+const WIND_PARTICLE_COUNT = 400;
+/* Drift-rate tune: motion scales with the legend ratio between a
+ * calm floor (the field never looks dead, even where data clamps)
+ * and the max-scale top. Fixed-length trails make tail length scale
+ * identically. Bump the floor if calm air ever reads as frozen. */
+const WIND_DRIFT_MIN_PX = 0.2;
+const WIND_DRIFT_MAX_PX = 1.6;
 /* Legend stops (ratio → RGB), mirroring .vector-legend-bar-wind in
  * MMM-WeatherMap.css — faster reads whiter. The bottom stop is the
  * blue that used to sit at ~25 mph, so calm air reads sky, not navy.
@@ -432,12 +438,14 @@ Module.register("MMM-WeatherMap", {
 
 	/* Screen-space drift per animation frame for a uniform wind field.
 	 * directionDeg is meteorological (where the wind blows FROM); the
-	 * particle moves toward direction+180. Deliberately sedate: even
-	 * a 75 mph max reads as a drift (~1.6px/frame), not a dash, so a
-	 * 10 mph breeze crawls. Pure — unit-tested. */
+	 * particle moves toward direction+180. Scales with the legend
+	 * ratio between the calm floor and max — and with fixed-length
+	 * trail histories the tail length scales identically.
+	 * Pure — unit-tested. */
 	windDriftVector: function (directionDeg, speed, max) {
 		const radians = ((directionDeg || 0) + 180) * (Math.PI / 180);
-		const magnitude = 0.2 + (Math.min(Math.max(speed || 0, 0), max || 75) / (max || 75)) * 1.4;
+		const ratio = Math.min(Math.max(speed || 0, 0), max || 75) / (max || 75);
+		const magnitude = WIND_DRIFT_MIN_PX + ratio * (WIND_DRIFT_MAX_PX - WIND_DRIFT_MIN_PX);
 		return {
 			dx: Math.sin(radians) * magnitude,
 			dy: -Math.cos(radians) * magnitude

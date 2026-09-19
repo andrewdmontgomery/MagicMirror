@@ -235,6 +235,31 @@ describe("windDriftVector", () => {
 		const mag = (v) => Math.hypot(v.dx, v.dy);
 		assert.ok(mag(fast) > mag(slow));
 	});
+
+	it("scales from the calm floor to the max", () => {
+		const mag = (speed) => {
+			const v = def.windDriftVector.call(ctx(), 180, speed, 75);
+			return Math.hypot(v.dx, v.dy);
+		};
+		assert.ok(Math.abs(mag(0) - 0.2) < 1e-9);
+		assert.ok(Math.abs(mag(75) - 1.6) < 1e-9);
+		assert.ok(Math.abs(mag(37.5) - 0.9) < 1e-9);
+	});
+
+	it("grows tails in proportion over frames", () => {
+		const { ctx2d, map } = trailStub();
+		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 10000, trail: [{ lon: 1, lat: 2 }] }];
+		const c = particleCtx(map, particles);
+		withoutRespawn(() => {
+			for (let i = 0; i < 10; i += 1) {
+				def.advectParticles.call(c, ctx2d, 400, 400);
+			}
+		});
+		// Max-scale southerly drift: 1.6px/frame straight down-stub.
+		assert.equal(particles[0].trail.length, 11);
+		const span = particles[0].trail[10].lat - particles[0].trail[0].lat;
+		assert.ok(Math.abs(span - 10 * 0.16) < 1e-9, `span ${span}`);
+	});
 });
 
 describe("windCompass16", () => {
@@ -1088,7 +1113,7 @@ describe("particle GL layer", () => {
 		def.ensureParticleLayer.call(c);
 		assert.deepEqual(map.calls.added, ["wind-particles"]);
 		assert.deepEqual(map.calls.moved, ["markers"]);
-		assert.equal(c.particles.length, 250);
+		assert.equal(c.particles.length, 400);
 	});
 
 	it("is a no-op outside wind view or when present", () => {
