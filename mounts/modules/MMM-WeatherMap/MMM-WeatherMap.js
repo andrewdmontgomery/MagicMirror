@@ -1064,6 +1064,72 @@ Module.register("MMM-WeatherMap", {
 		);
 	},
 
+	/* Track fill percent for a frame index (single frames read full).
+	 * Pure — tested. */
+	trackProgress: function (index, total) {
+		if (total < 2) {
+			return 100;
+		}
+		return (Math.min(Math.max(index, 0), total - 1) / (total - 1)) * 100;
+	},
+
+	/* Precip label policy: the latest frame reads Now, every fourth
+	 * frame back gets a time. Pure — tested. */
+	precipTickLabels: function (frames) {
+		return frames.map((frame, i) => {
+			if (i === frames.length - 1) {
+				return { isNow: true, label: "Now" };
+			}
+			if (i % 4 === 0) {
+				return { isNow: false, label: this.formatFrameTime(frame.time) };
+			}
+			return { isNow: false, label: null };
+		});
+	},
+
+	/* Wind label policy (Apple-style): every hour gets a tick mark,
+	 * but only even hours get text — plus always Now, with even-hour
+	 * labels neighboring Now suppressed so nothing collides. Pure. */
+	windTickLabels: function (slots) {
+		const nowIdx = slots.findIndex((slot) => slot.isNow);
+		return slots.map((slot, i) => {
+			if (slot.isNow) {
+				return { isNow: true, label: "Now" };
+			}
+			const even = new Date(slot.time * 1000).getHours() % 2 === 0;
+			if (even && (nowIdx === -1 || Math.abs(i - nowIdx) > 1)) {
+				return { isNow: false, label: this.formatHourLabel(slot.time) };
+			}
+			return { isNow: false, label: null };
+		});
+	},
+
+	/* Shared track painter: smooth progress fill, one tick mark per
+	 * frame, and absolutely-positioned labels from a policy list. */
+	paintTrack: function (count, labels) {
+		this.timelineTicks.innerHTML = "";
+		this.timelineTrack.innerHTML = "";
+		this.timelineProgress = document.createElement("div");
+		this.timelineProgress.className = "vector-tl-progress";
+		this.timelineTrack.appendChild(this.timelineProgress);
+		for (let i = 0; i < count; i += 1) {
+			const tick = document.createElement("div");
+			tick.className = "vector-tl-tick";
+			tick.style.left = `${count < 2 ? 0 : (i / (count - 1)) * 100}%`;
+			this.timelineTrack.appendChild(tick);
+			const entry = labels[i] || { isNow: false, label: null };
+			const text = document.createElement("span");
+			if (entry.label) {
+				text.textContent = entry.label;
+			}
+			if (entry.isNow) {
+				text.className = "vector-tl-now";
+			}
+			text.style.left = tick.style.left;
+			this.timelineTicks.appendChild(text);
+		}
+	},
+
 	buildTimelineTicks: function () {
 		if (!this.timelineTicks) {
 			return;
@@ -1075,45 +1141,16 @@ Module.register("MMM-WeatherMap", {
 		if (!this.frames) {
 			return;
 		}
-		this.timelineTicks.innerHTML = "";
-		this.timelineTrack.innerHTML = "";
 		const frames = this.frames.frames;
-		frames.forEach((frame, i) => {
-			const tick = document.createElement("div");
-			tick.className = "vector-tl-tick";
-			this.timelineTrack.appendChild(tick);
-			const label = document.createElement("span");
-			if (i === frames.length - 1) {
-				label.textContent = "Now";
-				label.className = "vector-tl-now";
-			} else if (i % 4 === 0) {
-				label.textContent = this.formatFrameTime(frame.time);
-			}
-			this.timelineTicks.appendChild(label);
-		});
+		this.paintTrack(frames.length, this.precipTickLabels(frames));
 	},
 
-	/* Hourly wind ticks: label every slot's hour, bolding Now — the
-	 * track doubles as the scrub progress, like Apple's wind bar. */
 	buildWindTicks: function () {
 		if (!this.timelineTicks) {
 			return;
 		}
-		this.timelineTicks.innerHTML = "";
-		this.timelineTrack.innerHTML = "";
-		this.windSlots().forEach((slot) => {
-			const tick = document.createElement("div");
-			tick.className = "vector-tl-tick";
-			this.timelineTrack.appendChild(tick);
-			const label = document.createElement("span");
-			if (slot.isNow) {
-				label.textContent = "Now";
-				label.className = "vector-tl-now";
-			} else {
-				label.textContent = this.formatHourLabel(slot.time);
-			}
-			this.timelineTicks.appendChild(label);
-		});
+		const slots = this.windSlots();
+		this.paintTrack(slots.length, this.windTickLabels(slots));
 	},
 
 	updateTimeline: function () {
@@ -1139,9 +1176,8 @@ Module.register("MMM-WeatherMap", {
 		this.timelineLabel.textContent = isLatest
 			? "Now"
 			: this.formatFrameTime(frame.time);
-		const ticks = this.timelineTrack.children;
-		for (let i = 0; i < ticks.length; i += 1) {
-			ticks[i].classList.toggle("vector-tl-active", i <= this.frameIndex);
+		if (this.timelineProgress) {
+			this.timelineProgress.style.width = `${this.trackProgress(this.frameIndex, frames.length)}%`;
 		}
 	},
 
@@ -1162,9 +1198,8 @@ Module.register("MMM-WeatherMap", {
 			const hour = slot.isNow ? "Now" : this.formatHourLabel(slot.time);
 			this.timelineLabel.textContent = base ? `${base} · ${hour}` : hour;
 		}
-		const ticks = this.timelineTrack.children;
-		for (let i = 0; i < ticks.length; i += 1) {
-			ticks[i].classList.toggle("vector-tl-active", i <= this.windIndex);
+		if (this.timelineProgress) {
+			this.timelineProgress.style.width = `${this.trackProgress(this.windIndex, slots.length)}%`;
 		}
 	},
 

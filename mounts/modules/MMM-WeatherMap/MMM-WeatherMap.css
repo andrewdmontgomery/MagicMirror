@@ -192,29 +192,58 @@
 	white-space: nowrap;
 }
 
+/* Apple-style scrub track: a smooth progress fill that glides
+ * between hourly steps, one tick mark per frame, and sparse labels
+ * below (every even hour + Now on the wind view). */
 .vector-tl-track {
-	display: flex;
-	gap: 3px;
+	position: relative;
 	height: 8px;
+	border-radius: 4px;
+	background: rgba(255, 255, 255, 0.22);
 	cursor: pointer;
 }
 
-.vector-tl-tick {
-	flex: 1 1 auto;
-	border-radius: 2px;
-	background: rgba(255, 255, 255, 0.22);
+.vector-tl-progress {
+	position: absolute;
+	left: 0;
+	top: 0;
+	bottom: 0;
+	width: 0;
+	border-radius: 4px;
+	background: #fff;
+	transition: width 0.6s linear;
 }
 
-.vector-tl-tick.vector-tl-active {
-	background: #fff;
+.vector-tl-tick {
+	position: absolute;
+	top: -2px;
+	bottom: -2px;
+	width: 2px;
+	margin-left: -1px;
+	border-radius: 1px;
+	background: rgba(255, 255, 255, 0.35);
+	pointer-events: none;
 }
 
 .vector-tl-ticks {
-	display: flex;
-	justify-content: space-between;
-	font-size: 11px;
+	position: relative;
+	height: 14px;
 	margin-top: 4px;
+	font-size: 11px;
 	white-space: nowrap;
+}
+
+.vector-tl-ticks span {
+	position: absolute;
+	transform: translateX(-50%);
+}
+
+.vector-tl-ticks span:first-child {
+	transform: none;
+}
+
+.vector-tl-ticks span:last-child {
+	transform: translateX(-100%);
 }
 
 .vector-tl-now {

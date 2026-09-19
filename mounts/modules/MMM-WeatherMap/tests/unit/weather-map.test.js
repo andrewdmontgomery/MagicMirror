@@ -843,6 +843,52 @@ describe("wind slots", () => {
 	});
 });
 
+describe("timeline track", () => {
+	function hourlySlots(hours, nowIdx) {
+		const base = new Date(2026, 5, 1, hours[0], 0).getTime() / 1000;
+		return hours.map((h, i) => ({
+			time: base + (h - hours[0]) * 3600,
+			isNow: i === nowIdx,
+			fieldIndex: i
+		}));
+	}
+
+	it("fills progress by frame with clamps and single-frame full", () => {
+		assert.equal(def.trackProgress.call(ctx(), 0, 13), 0);
+		assert.equal(def.trackProgress.call(ctx(), 12, 13), 100);
+		assert.ok(Math.abs(def.trackProgress.call(ctx(), 6, 12) - (6 / 11) * 100) < 1e-9);
+		assert.equal(def.trackProgress.call(ctx(), 0, 1), 100);
+		assert.equal(def.trackProgress.call(ctx(), -1, 5), 0);
+		assert.equal(def.trackProgress.call(ctx(), 9, 5), 100);
+	});
+
+	it("labels even hours plus now on the wind track", () => {
+		const c = ctx({});
+		c.formatHourLabel = (t) => def.formatHourLabel.call(c, t);
+		const labels = def.windTickLabels.call(c, hourlySlots([18, 19, 20, 21, 22], 2));
+		assert.deepEqual(labels.map((l) => l.label), ["6PM", null, "Now", null, "10PM"]);
+		assert.deepEqual(labels.map((l) => l.isNow), [false, false, true, false, false]);
+	});
+
+	it("suppresses even-hour labels neighboring now", () => {
+		const c = ctx({});
+		c.formatHourLabel = (t) => def.formatHourLabel.call(c, t);
+		const labels = def.windTickLabels.call(c, hourlySlots([18, 19, 20], 1));
+		assert.deepEqual(labels.map((l) => l.label), [null, "Now", null]);
+	});
+
+	it("labels the latest precip frame now and every fourth back", () => {
+		const c = ctx({});
+		c.formatFrameTime = (t) => def.formatFrameTime.call(c, t);
+		const frames = [0, 1, 2, 3, 4].map((i) => ({ time: 1000 + i }));
+		const labels = def.precipTickLabels.call(c, frames);
+		assert.equal(labels[4].label, "Now");
+		assert.ok(labels[4].isNow);
+		assert.equal(labels[0].label, def.formatFrameTime.call(c, 1000));
+		assert.deepEqual([labels[1].label, labels[2].label, labels[3].label], [null, null, null]);
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];
