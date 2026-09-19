@@ -1772,31 +1772,57 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
-	/* Bilinear sample of the HRRR lat/lon field (row 0 = north edge).
+	/* Inside a grid's lat/lon bbox (edges inclusive)? Pure — tested. */
+	inGridBounds: function (grid, lat, lon) {
+		if (!grid || !grid.dLat || !grid.dLon) {
+			return false;
+		}
+		const south = grid.lat0 - (grid.ny - 1) * grid.dLat;
+		const east = grid.lon0 + (grid.nx - 1) * grid.dLon;
+		return lat <= grid.lat0 && lat >= south && lon >= grid.lon0 && lon <= east;
+	},
+
+	/* Bilinear sample of one lat/lon grid (row 0 = north edge).
 	 * Positions outside clamp to the boundary value. Pure — tested. */
-	sampleWindField: function (field, lat, lon) {
-		if (!field || !field.dLat || !field.dLon || field.nx < 2 || field.ny < 2 || !Array.isArray(field.u) || !Array.isArray(field.v)) {
+	sampleGrid: function (grid, lat, lon) {
+		if (!grid || !grid.dLat || !grid.dLon || grid.nx < 2 || grid.ny < 2 || !Array.isArray(grid.u) || !Array.isArray(grid.v)) {
 			return null;
 		}
-		const row = Math.max(0, Math.min(field.ny - 1, (field.lat0 - lat) / field.dLat));
-		const col = Math.max(0, Math.min(field.nx - 1, (lon - field.lon0) / field.dLon));
-		const r0 = Math.min(field.ny - 2, Math.floor(row));
-		const c0 = Math.min(field.nx - 2, Math.floor(col));
+		const row = Math.max(0, Math.min(grid.ny - 1, (grid.lat0 - lat) / grid.dLat));
+		const col = Math.max(0, Math.min(grid.nx - 1, (lon - grid.lon0) / grid.dLon));
+		const r0 = Math.min(grid.ny - 2, Math.floor(row));
+		const c0 = Math.min(grid.nx - 2, Math.floor(col));
 		const fr = Math.min(1, row - r0);
 		const fc = Math.min(1, col - c0);
-		const at = (values, r, c) => values[r * field.nx + c];
+		const at = (values, r, c) => values[r * grid.nx + c];
 		return {
 			u:
-				at(field.u, r0, c0) * (1 - fr) * (1 - fc) +
-				at(field.u, r0, c0 + 1) * (1 - fr) * fc +
-				at(field.u, r0 + 1, c0) * fr * (1 - fc) +
-				at(field.u, r0 + 1, c0 + 1) * fr * fc,
+				at(grid.u, r0, c0) * (1 - fr) * (1 - fc) +
+				at(grid.u, r0, c0 + 1) * (1 - fr) * fc +
+				at(grid.u, r0 + 1, c0) * fr * (1 - fc) +
+				at(grid.u, r0 + 1, c0 + 1) * fr * fc,
 			v:
-				at(field.v, r0, c0) * (1 - fr) * (1 - fc) +
-				at(field.v, r0, c0 + 1) * (1 - fr) * fc +
-				at(field.v, r0 + 1, c0) * fr * (1 - fc) +
-				at(field.v, r0 + 1, c0 + 1) * fr * fc
+				at(grid.v, r0, c0) * (1 - fr) * (1 - fc) +
+				at(grid.v, r0, c0 + 1) * (1 - fr) * fc +
+				at(grid.v, r0 + 1, c0) * fr * (1 - fc) +
+				at(grid.v, r0 + 1, c0 + 1) * fr * fc
 		};
+	},
+
+	/* Sample an hourly frame: the fine regional grid inside its bbox,
+	 * else the coarse continental grid inside ITS bbox, else clamp to
+	 * the continental edge (beyond CONUS). Pure — tested. */
+	sampleWindField: function (field, lat, lon) {
+		if (!field) {
+			return null;
+		}
+		if (this.inGridBounds(field.regional, lat, lon)) {
+			return this.sampleGrid(field.regional, lat, lon);
+		}
+		if (field.continental) {
+			return this.sampleGrid(field.continental, lat, lon);
+		}
+		return null;
 	},
 
 	/* Screen drift for one map position from the gridded field: sample

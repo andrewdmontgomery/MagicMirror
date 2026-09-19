@@ -685,26 +685,51 @@ describe("field sampling", () => {
 		};
 	}
 
-	it("samples nodes exactly and blends interiors", () => {
-		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 3, 0), { u: 0, v: 0 });
-		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 2, 1), { u: 30, v: 0 });
-		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 2.5, 0.5), { u: 15, v: 0 });
+	it("samples grid nodes exactly and blends interiors", () => {
+		assert.deepEqual(def.sampleGrid.call(ctx(), testField(), 3, 0), { u: 0, v: 0 });
+		assert.deepEqual(def.sampleGrid.call(ctx(), testField(), 2, 1), { u: 30, v: 0 });
+		assert.deepEqual(def.sampleGrid.call(ctx(), testField(), 2.5, 0.5), { u: 15, v: 0 });
 	});
 
-	it("clamps outside positions to the boundary", () => {
-		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 99, 0), { u: 0, v: 0 });
-		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 2, 99), { u: 30, v: 0 });
+	it("clamps grid samples outside to the boundary", () => {
+		assert.deepEqual(def.sampleGrid.call(ctx(), testField(), 99, 0), { u: 0, v: 0 });
+		assert.deepEqual(def.sampleGrid.call(ctx(), testField(), 2, 99), { u: 30, v: 0 });
 	});
 
-	it("returns null without a usable field", () => {
+	it("bounds-checks grid edges inclusively", () => {
+		assert.equal(def.inGridBounds.call(ctx(), testField(), 3, 0), true);
+		assert.equal(def.inGridBounds.call(ctx(), testField(), 2, 1), true);
+		assert.equal(def.inGridBounds.call(ctx(), testField(), 0.9, 0.5), false);
+		assert.equal(def.inGridBounds.call(ctx(), testField(), 2, 1.1), false);
+		assert.equal(def.inGridBounds.call(ctx(), null, 2, 0.5), false);
+	});
+
+	it("prefers regional, falls through to continental, then clamps", () => {
+		const regional = testField();
+		const continental = { nx: 2, ny: 2, lat0: 30, lon0: -130, dLat: 10, dLon: 10, u: [99, 99, 99, 99], v: [0, 0, 0, 0] };
+		const frame = { regional, continental };
+		const c = ctx({});
+		c.inGridBounds = (g, la, lo) => def.inGridBounds.call(c, g, la, lo);
+		c.sampleGrid = (g, la, lo) => def.sampleGrid.call(c, g, la, lo);
+		// Inside regional (also inside continental): regional wins.
+		assert.deepEqual(def.sampleWindField.call(c, frame, 2.5, 0.5), { u: 15, v: 0 });
+		// Outside regional, inside continental: continental values.
+		assert.deepEqual(def.sampleWindField.call(c, frame, 25, -125), { u: 99, v: 0 });
+		// Outside both: clamped continental edge.
+		assert.deepEqual(def.sampleWindField.call(c, frame, -50, 200), { u: 99, v: 0 });
+	});
+
+	it("returns null without a usable frame", () => {
 		assert.equal(def.sampleWindField.call(ctx(), null, 0, 0), null);
 		assert.equal(def.sampleWindField.call(ctx(), {}, 0, 0), null);
 	});
 
 	it("converts an eastward flow to eastward drift", () => {
-		const field = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const field = { regional: { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] } };
 		const c = ctx({});
 		c.sampleWindField = (f, la, lo) => def.sampleWindField.call(c, f, la, lo);
+		c.inGridBounds = (g, la, lo) => def.inGridBounds.call(c, g, la, lo);
+		c.sampleGrid = (g, la, lo) => def.sampleGrid.call(c, g, la, lo);
 		c.windLegendScale = (u) => def.windLegendScale.call(c, u);
 		c.windDriftVector = (d, s, m) => def.windDriftVector.call(c, d, s, m);
 		const drift = def.fieldDrift.call(c, field, 0.5, 2.5, "imperial");
@@ -770,7 +795,7 @@ describe("field sampling", () => {
 
 	it("badges live conditions, ignoring scrub and fields", () => {
 		const badge = {};
-		const fields = [{ time: new Date(Date.now()).toISOString(), nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] }];
+		const fields = [{ time: new Date(Date.now()).toISOString(), regional: { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] } }];
 		const c = ctx({
 			config: { units: "imperial", lat: 2.5, lon: 0.5, windHoursPast: 4, windHoursFuture: 12 },
 			windFields: fields,
@@ -793,12 +818,14 @@ describe("field sampling", () => {
 
 	it("advects particles along the slotted field, not the fallback", () => {
 		const { calls, ctx2d, map } = trailStub();
-		const field = { time: new Date(Date.now()).toISOString(), nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const field = { time: new Date(Date.now()).toISOString(), regional: { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] } };
 		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
 		const c = particleCtx(map, particles);
 		c.windFields = [field];
 		c.windIndex = 0;
 		c.sampleWindField = (f, la, lo) => def.sampleWindField.call(c, f, la, lo);
+		c.inGridBounds = (g, la, lo) => def.inGridBounds.call(c, g, la, lo);
+		c.sampleGrid = (g, la, lo) => def.sampleGrid.call(c, g, la, lo);
 		c.fieldDrift = (f, lo, la, u) => def.fieldDrift.call(c, f, lo, la, u);
 		c.windLegendScale = (u) => def.windLegendScale.call(c, u);
 		c.windDriftVector = (d, s, m) => def.windDriftVector.call(c, d, s, m);
