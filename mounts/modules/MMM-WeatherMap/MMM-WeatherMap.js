@@ -939,12 +939,14 @@ Module.register("MMM-WeatherMap", {
 			// Opacity (not visibility): transparent layers keep their
 			// tiles loaded, so switching frames never flashes blank.
 			this.map.setPaintProperty(`rainviewer-${index}`, "raster-opacity", this.config.radarOpacity);
-			// Re-pin markers above the radar on every frame — and
-			// re-add them if a swap race ever lost the layer, mirroring
-			// the per-tick radar retry in restartAnimation.
+			// Re-pin markers above the radar on every frame. If the
+			// layer is ever missing (suspected view-swap race), warn
+			// with context and heal — the warning tells us whether
+			// the race is real or the cause lies elsewhere.
 			if (this.map.getLayer("markers")) {
 				this.map.moveLayer("markers");
 			} else {
+				Log.warn(`[MMM-WeatherMap] markers layer missing on frame ${index} in ${this.view} view — re-adding`);
 				this.addMarkers();
 			}
 		}

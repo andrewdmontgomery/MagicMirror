@@ -116,14 +116,23 @@ describe("showFrame", () => {
 		assert.equal(c.frameIndex, 3);
 	});
 
-	it("re-adds a swap-lost marker layer on the next frame", () => {
+	it("warns and re-adds a swap-lost marker layer on the next frame", () => {
 		const map = mapStub();
 		map.getLayer = () => undefined;
 		const added = [];
-		const c = ctx({ frames: framesFixture(), map });
+		const warned = [];
+		const realLog = global.Log;
+		global.Log = { warn: (message) => warned.push(message) };
+		const c = ctx({ frames: framesFixture(), map, view: "precip" });
 		c.addMarkers = () => added.push(true);
-		def.showFrame.call(c, 3, { prev: 1 });
+		try {
+			def.showFrame.call(c, 3, { prev: 1 });
+		} finally {
+			global.Log = realLog;
+		}
 		assert.deepEqual(added, [true]);
+		assert.equal(warned.length, 1);
+		assert.match(warned[0], /markers layer missing on frame 3 in precip view/);
 		assert.deepEqual(map.calls.paint, [
 			["rainviewer-1", "raster-opacity", 0],
 			["rainviewer-3", "raster-opacity", 0.45]
