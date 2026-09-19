@@ -445,18 +445,22 @@ describe("wind scrub and badge", () => {
 // space (screen = geo * 10) plus a mutable pan offset, so tests
 // simulate drags by mutating map.pan.
 function trailStub() {
-	const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [] };
-	const ctx2d = {
-		clearRect: (x, y, w, h) => calls.cleared.push([x, y, w, h]),
-		createLinearGradient: (x0, y0, x1, y1) => {
-			calls.gradients.push([x0, y0, x1, y1]);
-			return { addColorStop: (offset, color) => calls.stops.push([offset, color]) };
-		},
-		beginPath: () => {},
-		moveTo: (x, y) => calls.moveTo.push([x, y]),
-		lineTo: (x, y) => calls.lineTo.push([x, y]),
-		stroke: () => {}
-	};
+		const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [], saved: [], restored: [], arcs: [], filled: [] };
+		const ctx2d = {
+			clearRect: (x, y, w, h) => calls.cleared.push([x, y, w, h]),
+			createLinearGradient: (x0, y0, x1, y1) => {
+				calls.gradients.push([x0, y0, x1, y1]);
+				return { addColorStop: (offset, color) => calls.stops.push([offset, color]) };
+			},
+			beginPath: () => {},
+			moveTo: (x, y) => calls.moveTo.push([x, y]),
+			lineTo: (x, y) => calls.lineTo.push([x, y]),
+			stroke: () => {},
+			save: () => calls.saved.push(true),
+			restore: () => calls.restored.push(true),
+			arc: (x, y, r) => calls.arcs.push([x, y, r]),
+			fill: () => calls.filled.push(true)
+		};
 	const map = {
 		pan: { x: 0, y: 0 },
 		project: function (p) {
@@ -475,9 +479,10 @@ function particleCtx(map, particles) {
 	return {
 		map,
 		particles,
-		ghosts: [],
-		windIndex: 0,
-		config: { units: "imperial" },
+			ghosts: [],
+			windIndex: 0,
+			config: { units: "imperial", lat: 2, lon: 1, markers: [{ lat: 2, lng: 1 }] },
+			homeLngLat: function () { return def.homeLngLat.call(this); },
 			currentWindSlot: () => ({ direction: 0, speed: 75 }),
 			windLegendScale: def.windLegendScale,
 			windDriftVector: def.windDriftVector,
@@ -1020,6 +1025,22 @@ describe("legend colors", () => {
 		const c = particleCtx(map, []);
 		def.strokeTrail.call(c, ctx2d, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 1, 0);
 		assert.deepEqual(calls.stops, [[0, "rgba(81, 177, 222, 0)"], [1, "rgba(81, 177, 222, 0.6)"]]);
+	});
+
+	it("erases a hole around the home dot every frame", () => {
+		const { calls, ctx2d, map } = trailStub();
+		const c = particleCtx(map, []);
+		def.punchMarkerHole.call(c, ctx2d);
+		// Home (lon 1, lat 2) projects to stub (10, 20).
+		assert.deepEqual(calls.arcs, [[10, 20, 14]]);
+		assert.deepEqual(calls.saved, [true]);
+		assert.deepEqual(calls.restored, [true]);
+		assert.deepEqual(calls.filled, [true]);
+	});
+
+	it("skips the hole without a map", () => {
+		const { ctx2d } = trailStub();
+		def.punchMarkerHole.call(ctx({ map: null }), ctx2d);
 	});
 
 	it("carries drift ratio into ghost trails", () => {

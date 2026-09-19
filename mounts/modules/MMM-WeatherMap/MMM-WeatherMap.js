@@ -19,6 +19,9 @@ const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
+/* Cleared radius around the home dot: the overlay canvas paints above
+ * the GL marker layer, so every frame erases a hole for it. */
+const MARKER_HOLE_RADIUS = 14;
 /* Legend stops (ratio → RGB), mirroring .vector-legend-bar-wind in
  * MMM-WeatherMap.css — faster reads whiter. The bottom stop is the
  * blue that used to sit at ~25 mph, so calm air reads sky, not navy.
@@ -1476,6 +1479,23 @@ Module.register("MMM-WeatherMap", {
 		this.particles.forEach((p) => {
 			this.strokeTrail(ctx2d, p, 1, p.ratio);
 		});
+		this.punchMarkerHole(ctx2d);
+	},
+
+	/* Erase a hole around the home dot: the streak canvas sits above
+	 * the GL marker layer, so without this every trail paints over
+	 * the marker. Runs on advance and paused redraws alike. */
+	punchMarkerHole: function (ctx2d) {
+		if (!this.map) {
+			return;
+		}
+		const home = this.map.project(this.homeLngLat());
+		ctx2d.save();
+		ctx2d.globalCompositeOperation = "destination-out";
+		ctx2d.beginPath();
+		ctx2d.arc(home.x, home.y, MARKER_HOLE_RADIUS, 0, Math.PI * 2);
+		ctx2d.fill();
+		ctx2d.restore();
 	},
 
 	/* A dying particle's trail detaches into a headless ghost that
