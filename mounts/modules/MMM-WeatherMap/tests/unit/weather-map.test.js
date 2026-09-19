@@ -1344,6 +1344,43 @@ describe("wind recenter", () => {
 	});
 });
 
+describe("applyPosition", () => {
+	function posMap() {
+		const calls = { jumped: [], flown: [] };
+		return {
+			calls,
+			jumpTo: (target) => calls.jumped.push(target),
+			flyTo: (target) => calls.flown.push(target)
+		};
+	}
+
+	it("jumps by default and glides on request", () => {
+		const map = posMap();
+		const c = ctx({
+			map,
+			config: { lat: 1, lon: 2, defaultZoomLevel: 6, mapPositions: [{ lat: 3, lng: 4, zoom: 5 }] },
+			positionIndex: 0
+		});
+		c.positions = () => def.positions.call(c);
+		def.applyPosition.call(c);
+		def.applyPosition.call(c, { animate: true });
+		assert.deepEqual(map.calls.jumped, [{ center: [4, 3], zoom: 5 }]);
+		assert.deepEqual(map.calls.flown, [{ center: [4, 3], zoom: 5 }]);
+	});
+
+	it("falls back to config center and zoom", () => {
+		const map = posMap();
+		const c = ctx({ map, config: { lat: 1, lon: 2, defaultZoomLevel: 6 }, positionIndex: 0 });
+		c.positions = () => def.positions.call(c);
+		def.applyPosition.call(c, { animate: true });
+		assert.deepEqual(map.calls.flown, [{ center: [2, 1], zoom: 6 }]);
+	});
+
+	it("is a no-op without a map", () => {
+		def.applyPosition.call(ctx({ map: null }));
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];

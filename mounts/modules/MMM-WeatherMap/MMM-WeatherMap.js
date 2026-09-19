@@ -777,7 +777,7 @@ Module.register("MMM-WeatherMap", {
 				button.addEventListener("click", () => {
 					module.positionIndex = 0;
 					module.loopCount = 0;
-					module.applyPosition();
+					module.applyPosition({ animate: true });
 				});
 				const container = document.createElement("div");
 				container.className = "maplibregl-ctrl maplibregl-ctrl-group vector-reset-wrap";
@@ -929,17 +929,26 @@ Module.register("MMM-WeatherMap", {
 		return [{ lat: this.config.lat, lng: this.config.lon, zoom: this.config.defaultZoomLevel, loops: 1 }];
 	},
 
-	applyPosition: function () {
+	/* Jump or glide to the current position entry: the reset button
+	 * glides (flyTo eases center and zoom together); background
+	 * position cycling jumps so it never fights the frame cadence.
+	 * Pure dispatch — tested. */
+	applyPosition: function ({ animate = false } = {}) {
 		if (!this.map) {
 			return;
 		}
 		const positions = this.positions();
 		const pos = positions[this.positionIndex % positions.length] || positions[0];
 		this.positionIndex = this.positionIndex % positions.length;
-		this.map.jumpTo({
+		const target = {
 			center: [pos.lng !== undefined ? pos.lng : this.config.lon, pos.lat !== undefined ? pos.lat : this.config.lat],
 			zoom: pos.zoom !== undefined ? pos.zoom : this.config.defaultZoomLevel
-		});
+		};
+		if (animate) {
+			this.map.flyTo(target);
+		} else {
+			this.map.jumpTo(target);
+		}
 	},
 
 	addMarkers: function () {
