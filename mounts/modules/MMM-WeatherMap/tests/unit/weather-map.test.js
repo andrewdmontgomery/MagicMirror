@@ -207,22 +207,22 @@ describe("windBadgeSvg", () => {
 	it("renders an opaque single-path callout with the readout", () => {
 		const svg = def.windBadgeSvg.call(ctx(), "ENE", 6, "MPH");
 		assert.match(svg, /<path[^>]*fill="#2C353C"/);
-		assert.match(svg, /<svg[^>]*viewBox="0 0 66 72"/);
-		assert.match(svg, /A29,29 0 1 0/);
+		assert.match(svg, /<svg[^>]*viewBox="0 0 62 66"/);
+		assert.match(svg, /A25,25 0 1 0/);
 		assert.match(svg, />ENE</);
 		assert.match(svg, />6</);
 		assert.match(svg, />MPH</);
 	});
 
 	it("joins the tail to the circle without kinks", () => {
-		// Tail base points must sit ON the r=29 circle around (33,31):
+		// Tail base points must sit ON the r=25 circle around (31,29):
 		// anything inside bows the arc off-center and clips the top.
 		const svg = def.windBadgeSvg.call(ctx(), "N", 1, "MPH");
 		const d = svg.match(/d="M([\d.]+),([\d.]+) L([\d.]+),([\d.]+) L([\d.]+),([\d.]+) A/);
 		assert.ok(d, "expected the tail-then-arc path");
 		[[1, 2], [5, 6]].forEach(([xi, yi]) => {
-			const dist = Math.hypot(Number(d[xi]) - 33, Number(d[yi]) - 31);
-			assert.ok(Math.abs(dist - 29) < 0.1, `base point sits on the circle (got ${dist})`);
+			const dist = Math.hypot(Number(d[xi]) - 31, Number(d[yi]) - 29);
+			assert.ok(Math.abs(dist - 25) < 0.1, `base point sits on the circle (got ${dist})`);
 		});
 	});
 });
