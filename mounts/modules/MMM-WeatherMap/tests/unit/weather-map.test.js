@@ -251,6 +251,26 @@ describe("wind callout positioning", () => {
 	it("is a no-op before the map or callout exists", () => {
 		def.positionWindCallout.call(ctx({ map: null, windCallout: null }));
 	});
+
+	it("renderMapView keeps the getDom-built callout reference", () => {
+		// Regression: renderMapView runs AFTER getDom (setTimeout) and
+		// must not drop the callout the load handler has to position.
+		const callout = { style: {} };
+		const badge = {};
+		const c = ctx({
+			map: null,
+			mapStyle: null,
+			particleRaf: null,
+			particles: [],
+			windCallout: callout,
+			windBadge: badge
+		});
+		c.stopParticles = () => def.stopParticles.call(c);
+		c.initMap = () => {};
+		def.renderMapView.call(c, {});
+		assert.equal(c.windCallout, callout);
+		assert.equal(c.windBadge, badge);
+	});
 });
 
 describe("formatHourLabel", () => {

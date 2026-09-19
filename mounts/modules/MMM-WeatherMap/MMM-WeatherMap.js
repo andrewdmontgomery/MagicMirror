@@ -350,8 +350,10 @@ Module.register("MMM-WeatherMap", {
 
 	renderMapView: function (mapDiv) {
 		this.stopParticles();
-		this.windCallout = null;
-		this.windBadge = null;
+		// NOTE: do NOT clear windCallout/windBadge here — getDom builds
+		// them before this runs (via setTimeout), and the load handler
+		// below needs the live reference to position the callout.
+		// They are rebuilt/nulled in getDom itself on every updateDom.
 		if (this.map) {
 			this.map.remove();
 			this.map = null;
