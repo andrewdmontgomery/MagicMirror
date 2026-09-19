@@ -23,7 +23,7 @@ const WIND_PARTICLE_COUNT = 800;
  * calm floor (the field never looks dead, even where data clamps)
  * and the max-scale top. Fixed-length trails make tail length scale
  * identically. Bump the floor if calm air ever reads as frozen. */
-const WIND_DRIFT_MIN_PX = 0.1;
+const WIND_DRIFT_MIN_PX = 0.03;
 const WIND_DRIFT_MAX_PX = 1.6;
 /* Legend stops (ratio → RGB), mirroring .vector-legend-bar-wind in
  * MMM-WeatherMap.css — faster reads whiter. The bottom stop is the
