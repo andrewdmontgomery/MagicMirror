@@ -433,10 +433,15 @@ function particleCtx(map, particles) {
 		map,
 		particles,
 		ghosts: [],
+		windIndex: 0,
 		config: { units: "imperial" },
 		currentWindSlot: () => ({ direction: 0, speed: 75 }),
 		windLegendScale: def.windLegendScale,
 		windDriftVector: def.windDriftVector,
+		// Fixed uniform slot: preserves the pre-slots fallback drift
+		// (75 from north) so the trail-geometry tests are unaffected
+		// by the slots refactor.
+		windSlots: () => [{ time: 0, fieldIndex: -1, isNow: true, speed: 75, direction: 0 }],
 		spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
 		ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
 		strokeTrail: function (c2d, p, a) { return def.strokeTrail.call(this, c2d, p, a); }
@@ -713,12 +718,12 @@ describe("field sampling", () => {
 		assert.equal(def.currentConditions.call(ctx({ wind: null })), null);
 	});
 
-	it("badges live conditions, ignoring scrub and field", () => {
+	it("badges live conditions, ignoring scrub and fields", () => {
 		const badge = {};
-		const field = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const fields = [{ time: new Date(Date.now()).toISOString(), nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] }];
 		const c = ctx({
 			config: { units: "imperial", lat: 2.5, lon: 0.5, windHoursPast: 4, windHoursFuture: 12 },
-			windField: field,
+			windFields: fields,
 			windBadge: badge,
 			wind: {
 				current: { speed: 7.4, direction: 111 },
@@ -736,19 +741,105 @@ describe("field sampling", () => {
 		assert.match(badge.innerHTML, />7</);
 	});
 
-	it("advects particles along the field, not the fallback", () => {
+	it("advects particles along the slotted field, not the fallback", () => {
 		const { ctx2d, map } = trailStub();
-		const field = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const field = { time: new Date(Date.now()).toISOString(), nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
 		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
 		const c = particleCtx(map, particles);
-		c.windField = field;
+		c.windFields = [field];
+		c.windIndex = 0;
 		c.sampleWindField = (f, la, lo) => def.sampleWindField.call(c, f, la, lo);
 		c.fieldDrift = (f, lo, la, u) => def.fieldDrift.call(c, f, lo, la, u);
+		c.windLegendScale = (u) => def.windLegendScale.call(c, u);
+		c.windDriftVector = (d, s, m) => def.windDriftVector.call(c, d, s, m);
+		c.windSlots = () => def.windSlots.call(c);
+		c.matchHourly = (t) => def.matchHourly.call(c, t);
+		c.currentWindWindow = () => [];
 		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
 		// 10 m/s eastward = 22.37 mph: 0.2 + (22.37/75) * 1.4 px/frame.
 		const step = (0.2 + ((10 * 2.23694) / 75) * 1.4) / 10;
 		assert.ok(Math.abs(particles[0].lon - (1 + step)) < 1e-9, `lon ${particles[0].lon}`);
 		assert.ok(Math.abs(particles[0].lat - 2) < 1e-9, `lat ${particles[0].lat}`);
+	});
+});
+
+describe("wind slots", () => {
+	function threeFields() {
+		const now = Date.now();
+		const iso = (deltaHours) => new Date(now + deltaHours * 3600 * 1000).toISOString();
+		const geo = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [0, 0, 0, 0], v: [0, 0, 0, 0] };
+		return [{ ...geo, time: iso(-2) }, { ...geo, time: iso(0) }, { ...geo, time: iso(3) }];
+	}
+
+	it("maps one slot per field with now flagged", () => {
+		const c = ctx({ windFields: threeFields(), windIndex: 0, wind: null });
+		c.matchHourly = (t) => def.matchHourly.call(c, t);
+		const slots = def.windSlots.call(c);
+		assert.equal(slots.length, 3);
+		assert.deepEqual(slots.map((s) => s.fieldIndex), [0, 1, 2]);
+		assert.deepEqual(slots.map((s) => s.isNow), [false, true, false]);
+	});
+
+	it("merges the nearest hourly speed into each slot", () => {
+		const hourly = { time: [100, 200, 300], speed: [1, 2, 3], direction: [10, 20, 30] };
+		const c = ctx({ windFields: threeFields(), wind: { hourly } });
+		c.matchHourly = (t) => def.matchHourly.call(c, t);
+		const slots = def.windSlots.call(c);
+		assert.ok(slots.every((s) => [1, 2, 3].includes(s.speed)));
+	});
+
+	it("falls back to the OM window without fields", () => {
+		const hourly = { time: [1], speed: [7], direction: [111] };
+		const c = ctx({ config: { windHoursPast: 4, windHoursFuture: 12 }, wind: { hourly } });
+		c.windWindow = (h, n, p, f) => def.windWindow.call(c, h, n, p, f);
+		const slots = def.windSlots.call(c);
+		assert.equal(slots.length, 1);
+		assert.equal(slots[0].fieldIndex, -1);
+		assert.equal(slots[0].speed, 7);
+	});
+
+	it("matches hourly values to the nearest hour", () => {
+		const c = ctx({ wind: { hourly: { time: [100, 200, 300], speed: [1, 2, 3], direction: [10, 20, 30] } } });
+		assert.deepEqual(def.matchHourly.call(c, 149), { speed: 1, direction: 10 });
+		assert.deepEqual(def.matchHourly.call(c, 250), { speed: 2, direction: 20 });
+		assert.deepEqual(def.matchHourly.call(ctx({ wind: null }), 250), { speed: null, direction: null });
+	});
+
+	it("activeField follows the scrubbed slot", () => {
+		const fields = threeFields();
+		const c = ctx({ windFields: fields, windIndex: 2 });
+		c.windSlots = () => def.windSlots.call(c);
+		c.matchHourly = () => ({ speed: null, direction: null });
+		assert.equal(def.activeField.call(c), fields[2]);
+		c.windIndex = 99;
+		assert.equal(def.activeField.call(c), fields[2]);
+		assert.equal(def.activeField.call(ctx({ windFields: [] })), null);
+	});
+
+	it("labels the scrubbed hour next to the date", () => {
+		const made = [];
+		const c = ctx({
+			timelineDateBase: "Friday, September 18, 2026",
+			timelineLabel: { set textContent(v) { made.push(v); } },
+			timelineTicks: { hasChildNodes: () => true },
+			timelineTrack: {
+				children: [
+					{ classList: { toggle: () => {} } },
+					{ classList: { toggle: () => {} } },
+					{ classList: { toggle: () => {} } }
+				]
+			},
+			windIndex: 2
+		});
+		c.windSlots = () => [
+			{ time: 1, isNow: false, fieldIndex: 0 },
+			{ time: 2, isNow: true, fieldIndex: 1 },
+			{ time: 3, isNow: false, fieldIndex: 2 }
+		];
+		c.formatHourLabel = (t) => def.formatHourLabel.call(c, t);
+		def.updateWindTimeline.call(c);
+		const hour = def.formatHourLabel.call(c, 3);
+		assert.deepEqual(made, [`Friday, September 18, 2026 · ${hour}`]);
 	});
 });
 

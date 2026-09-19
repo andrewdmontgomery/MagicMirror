@@ -81,7 +81,7 @@ Module.register("MMM-WeatherMap", {
 		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
 		this.wind = null;
 		this.windIndex = 0;
-		this.windField = null;
+		this.windFields = [];
 		this.windCallout = null;
 		this.windBadge = null;
 		this.ghosts = [];
@@ -91,7 +91,7 @@ Module.register("MMM-WeatherMap", {
 		this.getStyle();
 		this.getFrames();
 		this.getWind();
-		this.getWindField();
+		this.getWindFields();
 		setInterval(() => {
 			this.getFrames();
 		}, this.config.updateInterval);
@@ -99,7 +99,7 @@ Module.register("MMM-WeatherMap", {
 			this.getWind();
 		}, this.config.windUpdateInterval);
 		setInterval(() => {
-			this.getWindField();
+			this.getWindFields();
 		}, this.config.windFieldUpdateInterval);
 	},
 
@@ -130,8 +130,8 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
-	getWindField: function () {
-		this.sendSocketNotification("GET_WIND_FIELD", {
+	getWindFields: function () {
+		this.sendSocketNotification("GET_WIND_FIELDS", {
 			lat: this.config.lat,
 			lon: this.config.lon
 		});
@@ -201,20 +201,73 @@ Module.register("MMM-WeatherMap", {
 		return window;
 	},
 
-	/* Index of the "now" slot inside the current wind window, so a
-	 * fresh payload opens on the present hour. Pure — unit-tested. */
-	defaultWindIndex: function () {
-		if (!this.wind || !this.wind.hourly) {
-			return 0;
+	/* Timeline slots: one per gridded field hour (past analyses plus
+	 * forecasts), each merged with the nearest Open-Meteo hourly
+	 * speed/direction as the no-field fallback. Without fields yet,
+	 * the OM hourly window fills in with fieldIndex -1. The slot
+	 * nearest now is flagged isNow. */
+	windSlots: function () {
+		if (Array.isArray(this.windFields) && this.windFields.length > 0) {
+			const now = Math.floor(Date.now() / 1000);
+			const slots = this.windFields.map((field, i) => ({
+				time: Math.floor(new Date(field.time).getTime() / 1000),
+				fieldIndex: i,
+				isNow: false,
+				speed: null,
+				direction: null
+			}));
+			let best = 0;
+			slots.forEach((slot, i) => {
+				if (Math.abs(slot.time - now) < Math.abs(slots[best].time - now)) {
+					best = i;
+				}
+			});
+			slots.forEach((slot, i) => {
+				const near = this.matchHourly(slot.time);
+				slot.speed = near.speed;
+				slot.direction = near.direction;
+				slot.isNow = i === best;
+			});
+			return slots;
 		}
-		const window = this.windWindow(
-			this.wind.hourly,
-			Math.floor(Date.now() / 1000),
-			this.config.windHoursPast,
-			this.config.windHoursFuture
-		);
-		const nowAt = window.findIndex((slot) => slot.isNow);
-		return nowAt === -1 ? 0 : nowAt;
+		return this.currentWindWindow().map((slot) => ({ ...slot, fieldIndex: -1 }));
+	},
+
+	/* Nearest Open-Meteo hourly speed/direction to a timestamp (the
+	 * uniform fallback each slot carries). Pure-ish — tested. */
+	matchHourly: function (timeSec) {
+		const hourly = this.wind && this.wind.hourly;
+		if (!hourly || !Array.isArray(hourly.time) || hourly.time.length === 0) {
+			return { speed: null, direction: null };
+		}
+		let best = 0;
+		hourly.time.forEach((t, i) => {
+			if (Math.abs(t - timeSec) < Math.abs(hourly.time[best] - timeSec)) {
+				best = i;
+			}
+		});
+		return {
+			speed: hourly.speed ? hourly.speed[best] : null,
+			direction: hourly.direction ? hourly.direction[best] : null
+		};
+	},
+
+	/* Gridded field for the scrubbed slot (null on the OM fallback
+	 * path or before fields arrive). */
+	activeField: function () {
+		const slots = this.windSlots();
+		if (slots.length === 0) {
+			return null;
+		}
+		const slot = slots[Math.min(this.windIndex, slots.length - 1)];
+		return slot.fieldIndex >= 0 ? this.windFields[slot.fieldIndex] : null;
+	},
+
+	/* Index of the "now" slot, so a fresh payload opens on the present
+	 * hour. Pure — unit-tested. */
+	defaultWindIndex: function () {
+		const at = this.windSlots().findIndex((slot) => slot.isNow);
+		return at === -1 ? 0 : at;
 	},
 
 	/* Screen-space drift per animation frame for a uniform wind field.
@@ -246,9 +299,16 @@ Module.register("MMM-WeatherMap", {
 				this.styleError = (payload && payload.error) || "Style fetch failed.";
 			}
 			this.updateDom(this.config.animationSpeed);
-		} else if (notification === "WIND_FIELD_RESULT") {
-			if (payload && Array.isArray(payload.u) && Array.isArray(payload.v)) {
-				this.windField = payload;
+		} else if (notification === "WIND_FIELDS_RESULT") {
+			if (payload && Array.isArray(payload.fields) && payload.fields.length > 0) {
+				this.windFields = payload.fields;
+				this.windIndex = this.defaultWindIndex();
+				if (this.isWindView()) {
+					this.stopParticles();
+					this.updateDom(this.config.animationSpeed);
+				} else {
+					this.updateTimeline();
+				}
 			}
 		} else if (notification === "WIND_SUMMARY_RESULT") {
 			if (payload && payload.hourly) {
@@ -615,19 +675,6 @@ Module.register("MMM-WeatherMap", {
 		this.windBadge.innerHTML = this.windBadgeSvg(direction, speed, scale.unit.toUpperCase());
 	},
 
-	currentWindSlot: function () {
-		if (!this.wind || !this.wind.hourly) {
-			return null;
-		}
-		const window = this.windWindow(
-			this.wind.hourly,
-			Math.floor(Date.now() / 1000),
-			this.config.windHoursPast,
-			this.config.windHoursFuture
-		);
-		return window[this.windIndex] || window[0] || null;
-	},
-
 	/* Static attribution caption (CARTO/OSM terms require it visible).
 	 * Replaces the stock toggle: dimmer, smaller, and below the map. */
 	attributionDiv: function () {
@@ -775,18 +822,11 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
-	/* Wind tick: advance the hourly slot; the badge, timeline, and
-	 * particle drift all read the current slot. */
+	/* Wind tick: advance the hourly slot; the timeline and particle
+	 * drift read the current slot (the badge always reads current
+	 * conditions). */
 	restartWindAnimation: function () {
-		if (!this.wind || !this.wind.hourly) {
-			return;
-		}
-		const slots = this.windWindow(
-			this.wind.hourly,
-			Math.floor(Date.now() / 1000),
-			this.config.windHoursPast,
-			this.config.windHoursFuture
-		);
+		const slots = this.windSlots();
 		if (slots.length < 2) {
 			return;
 		}
@@ -865,15 +905,7 @@ Module.register("MMM-WeatherMap", {
 
 	scrubTo: function (ratio) {
 		if (this.isWindView()) {
-			if (!this.wind || !this.wind.hourly) {
-				return;
-			}
-			const slots = this.windWindow(
-				this.wind.hourly,
-				Math.floor(Date.now() / 1000),
-				this.config.windHoursPast,
-				this.config.windHoursFuture
-			);
+			const slots = this.windSlots();
 			if (slots.length === 0) {
 				return;
 			}
@@ -939,12 +971,13 @@ Module.register("MMM-WeatherMap", {
 		this.timelineLabel = document.createElement("div");
 		this.timelineLabel.className = "vector-tl-date light";
 		const now = new Date(Date.now());
-		this.timelineLabel.textContent = now.toLocaleDateString("en-US", {
+		this.timelineDateBase = now.toLocaleDateString("en-US", {
 			weekday: "long",
 			month: "long",
 			day: "numeric",
 			year: "numeric"
 		});
+		this.timelineLabel.textContent = this.timelineDateBase;
 		main.appendChild(this.timelineLabel);
 
 		this.timelineTrack = document.createElement("div");
@@ -1068,7 +1101,7 @@ Module.register("MMM-WeatherMap", {
 		}
 		this.timelineTicks.innerHTML = "";
 		this.timelineTrack.innerHTML = "";
-		this.currentWindWindow().forEach((slot) => {
+		this.windSlots().forEach((slot) => {
 			const tick = document.createElement("div");
 			tick.className = "vector-tl-tick";
 			this.timelineTrack.appendChild(tick);
@@ -1112,13 +1145,22 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
-	/* Wind track progress only — the date label above it stays fixed. */
+	/* Wind track progress plus the scrubbed hour: the date line reads
+	 * "date · hour" so both ends of the past→future timeline stay
+	 * truthful (the badge separately always reads current). */
 	updateWindTimeline: function () {
 		if (!this.timelineTrack || !this.timelineTicks) {
 			return;
 		}
 		if (!this.timelineTicks.hasChildNodes()) {
 			this.buildTimelineTicks();
+		}
+		const slots = this.windSlots();
+		const slot = slots[Math.min(this.windIndex, slots.length - 1)];
+		if (slot && this.timelineLabel) {
+			const base = this.timelineDateBase || "";
+			const hour = slot.isNow ? "Now" : this.formatHourLabel(slot.time);
+			this.timelineLabel.textContent = base ? `${base} · ${hour}` : hour;
 		}
 		const ticks = this.timelineTrack.children;
 		for (let i = 0; i < ticks.length; i += 1) {
@@ -1200,11 +1242,11 @@ Module.register("MMM-WeatherMap", {
 	 * Because history is geographic, every point reprojects — pans
 	 * and zooms carry whole trails rigidly, with no bitmap to smear. */
 	advectParticles: function (ctx2d, width, height, advance = true) {
-		const slot = this.currentWindSlot();
+		const slots = this.windSlots();
+		const slot = slots.length > 0 ? slots[Math.min(this.windIndex, slots.length - 1)] : null;
 		const scale = this.windLegendScale(this.config.units);
-		// Uniform slot vector until the gridded field arrives; then
-		// each particle samples its own position (Task 5 will retire
-		// the uniform path for the badge/timeline too).
+		// Uniform slot vector when no gridded field covers the scrubbed
+		// hour; otherwise each particle samples its own hour's field.
 		const fallback = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
 		// Full clear, never a translucent fade: the map underneath
 		// returns to its exact base color every frame. No residue.
@@ -1218,8 +1260,9 @@ Module.register("MMM-WeatherMap", {
 		this.particles.forEach((p) => {
 			if (advance) {
 				let drift = fallback;
-				if (this.windField) {
-					const sampled = this.fieldDrift(this.windField, p.lon, p.lat, this.config.units);
+				const field = slot && slot.fieldIndex >= 0 ? this.windFields[slot.fieldIndex] : null;
+				if (field) {
+					const sampled = this.fieldDrift(field, p.lon, p.lat, this.config.units);
 					if (sampled) {
 						drift = sampled;
 					}

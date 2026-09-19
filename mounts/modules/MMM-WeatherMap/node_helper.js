@@ -23,28 +23,67 @@ module.exports = NodeHelper.create({
 		if (notification === "GET_WIND_SUMMARY") {
 			this.fetchWind(payload || {});
 		}
-		if (notification === "GET_WIND_FIELD") {
-			this.fetchWindField(payload || {});
+		if (notification === "GET_WIND_FIELDS") {
+			this.fetchWindFields(payload || {});
 		}
 	},
 
+	/* Hour specs for the wind timeline: the latest run's analysis
+	 * plus its f01..f12 forecasts, preceded by the four previous
+	 * runs' analyses — past analyses plus future hours from one
+	 * dataset. Pure given the latest cycle — unit-tested. */
+	fieldHours: function (latest, pastAnalyses = 4, forecastHours = 12) {
+		const specs = [];
+		const base = Date.UTC(
+			Number(latest.date.slice(0, 4)),
+			Number(latest.date.slice(4, 6)) - 1,
+			Number(latest.date.slice(6, 8)),
+			Number(latest.hour)
+		);
+		for (let back = pastAnalyses; back >= 1; back -= 1) {
+			const when = new Date(base - back * 3600 * 1000);
+			specs.push({ kind: "analysis", date: yyyymmdd(when), hour: hh(when), forecastHour: 0 });
+		}
+		specs.push({ kind: "analysis", date: latest.date, hour: latest.hour, forecastHour: 0 });
+		for (let fh = 1; fh <= forecastHours; fh += 1) {
+			specs.push({ kind: "forecast", date: latest.date, hour: latest.hour, forecastHour: fh });
+		}
+		return specs;
+
+		function yyyymmdd(d) {
+			return d.toISOString().slice(0, 10).replace(/-/g, "");
+		}
+		function hh(d) {
+			return String(d.getUTCHours()).padStart(2, "0");
+		}
+	},
+
+	/* Index sidecar text for one HRRR file (run + forecast hour).
+	 * Throws when the file isn't posted yet. */
+	cycleIndex: async function (date, hour, forecastHour = 0) {
+		const fh = String(forecastHour).padStart(2, "0");
+		const url =
+			`https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.${date}/conus/hrrr.t${hour}z.wrfsfcf${fh}.grib2.idx`;
+		const response = await fetch(url);
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status} for ${url}`);
+		}
+		return await response.text();
+	},
+
 	/* Latest usable HRRR cycle: probe hourly runs back from now (model
-	 * lag is ~1h) and take the first whose index exists. Returns
-	 * { date: "YYYYMMDD", hour: "HH" }. */
+	 * lag is ~1h) and take the first whose analysis index exists.
+	 * Returns { date: "YYYYMMDD", hour: "HH" }. */
 	latestCycle: async function (hoursBack = 6) {
 		for (let back = 0; back <= hoursBack; back += 1) {
 			const when = new Date(Date.now() - back * 3600 * 1000);
 			const date = when.toISOString().slice(0, 10).replace(/-/g, "");
 			const hour = String(when.getUTCHours()).padStart(2, "0");
-			const url =
-					`https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.${date}/conus/hrrr.t${hour}z.wrfsfcf00.grib2.idx`;
 			try {
-				const response = await fetch(url);
-				if (response.ok) {
-					return { date, hour, indexUrl: url, indexText: await response.text() };
-				}
+				await this.cycleIndex(date, hour, 0);
+				return { date, hour };
 			} catch (error) {
-				console.error("MMM-WeatherMap: HRRR index probe failed", url, error.message || error);
+				console.error("MMM-WeatherMap: HRRR index probe failed", error.message || error);
 			}
 		}
 		throw new Error("MMM-WeatherMap: no HRRR cycle found in probe window");
@@ -96,7 +135,7 @@ module.exports = NodeHelper.create({
 	 * projection code ships to the frontend). Output row 0 is the
 	 * north edge (lat decreases as rows increase) regardless of
 	 * storage order. Pure given decoded arrays — covered by the
-	 * fetchWindField integration test. */
+	 * fetchWindFields integration test. */
 	resampleToLatLon: function (message, u, v, nx, ny, originRow, originCol, stride = WIND_FIELD_STRIDE, across = 40) {
 		const cells = (across - 1) * stride;
 		const northwest = grib2.gridToLatLon(message, originRow + cells, originCol);
@@ -200,72 +239,135 @@ module.exports = NodeHelper.create({
 		}
 	},
 
-	/* Gridded wind field: latest HRRR analysis U/V 10m messages, byte
-	 * ranges located via the .idx sidecar, decoded with grib2.js, and
-	 * served as a downsampled regional window around the configured
-	 * point. Keyless AWS open data — nothing to protect. */
-	fetchWindField: async function ({ lat, lon } = {}) {
+	/* Valid time of one hour spec as ISO. Pure — unit-tested. */
+	validTime: function (spec) {
+		const runEpoch = Date.UTC(
+			Number(spec.date.slice(0, 4)),
+			Number(spec.date.slice(4, 6)) - 1,
+			Number(spec.date.slice(6, 8)),
+			Number(spec.hour)
+		);
+		return new Date(runEpoch + spec.forecastHour * 3600 * 1000).toISOString();
+	},
+
+	/* Decoded U/V components for one hour spec (index locate +
+	 * byte-range fetch + decode). Throws on any failure. */
+	fetchHourComponents: async function (spec) {
+		const fh = String(spec.forecastHour).padStart(2, "0");
+		const base =
+			`https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.${spec.date}/conus/hrrr.t${spec.hour}z.wrfsfcf${fh}.grib2`;
+		const indexText = await this.cycleIndex(spec.date, spec.hour, spec.forecastHour);
+		const uRange = this.parseIdxRange(indexText, "UGRD:10 m above ground");
+		const vRange = this.parseIdxRange(indexText, "VGRD:10 m above ground");
+		const [uBytes, vBytes] = await Promise.all([
+			this.fetchBytes(base, uRange.start, uRange.end),
+			this.fetchBytes(base, vRange.start, vRange.end)
+		]);
+		const u = this.decodeComponent(uBytes, 2, 2, "UGRD");
+		const v = this.decodeComponent(vBytes, 2, 3, "VGRD");
+		return { message: u.message, u: u.values, v: v.values };
+	},
+
+	/* Resample decoded components onto the shared lat/lon window. */
+	resampleHour: function (components, originRow, originCol, time) {
+		const dims = grib2.gridDimensions(components.message);
+		const field = this.resampleToLatLon(
+			components.message,
+			components.u,
+			components.v,
+			dims.nx,
+			dims.ny,
+			originRow,
+			originCol
+		);
+		return {
+			time,
+			units: "m/s",
+			nx: field.nx,
+			ny: field.ny,
+			lat0: field.lat0,
+			lon0: field.lon0,
+			dLat: field.dLat,
+			dLon: field.dLon,
+			u: Array.from(field.u),
+			v: Array.from(field.v)
+		};
+	},
+
+	/* Wind timeline dataset: past analyses plus forecast hours, each a
+	 * lat/lon field on the same window. Failed hours are skipped, so
+	 * a partial timeline still serves. Keyless AWS open data. */
+	fetchWindFields: async function ({ lat, lon } = {}) {
 		if (lat === undefined || lon === undefined) {
 			return;
 		}
 		try {
-			const cycle = await this.latestCycle();
-			const base = `https://noaa-hrrr-bdp-pds.s3.amazonaws.com/hrrr.${cycle.date}/conus/hrrr.t${cycle.hour}z.wrfsfcf00.grib2`;
-			const uRange = this.parseIdxRange(cycle.indexText, "UGRD:10 m above ground");
-			const vRange = this.parseIdxRange(cycle.indexText, "VGRD:10 m above ground");
-			const [uBytes, vBytes] = await Promise.all([
-				this.fetchBytes(base, uRange.start, uRange.end),
-				this.fetchBytes(base, vRange.start, vRange.end)
-			]);
-			const u = this.decodeComponent(uBytes, 2, 2, "UGRD");
-			const v = this.decodeComponent(vBytes, 2, 3, "VGRD");
-			const dims = grib2.gridDimensions(u.message);
-			const center = grib2.latLonToGrid(u.message, lat, lon);
+			const latest = await this.latestCycle();
+			const specs = this.fieldHours(latest);
+			// Window origin from the latest analysis (same grid for
+			// every hour, so one origin serves all frames).
+			const zero = specs.find((s) => s.kind === "analysis" && s.date === latest.date && s.hour === latest.hour);
+			const zeroComponents = await this.fetchHourComponents(zero);
+			const zeroDims = grib2.gridDimensions(zeroComponents.message);
+			const center = grib2.latLonToGrid(zeroComponents.message, lat, lon);
 			const window = this.extractRegion(
-				u.values,
-				v.values,
-				dims.nx,
-				dims.ny,
+				zeroComponents.u,
+				zeroComponents.v,
+				zeroDims.nx,
+				zeroDims.ny,
 				Math.round(center.row),
 				Math.round(center.col)
 			);
-			const field = this.resampleToLatLon(
-				u.message,
-				u.values,
-				v.values,
-				dims.nx,
-				dims.ny,
-				window.originRow,
-				window.originCol
+			const frames = await Promise.all(
+				specs.map((spec) =>
+					(async () => {
+						const components =
+							spec === zero ? zeroComponents : await this.fetchHourComponents(spec);
+						return this.resampleHour(components, window.originRow, window.originCol, this.validTime(spec));
+					})().catch((error) => {
+						console.error(
+							"MMM-WeatherMap: skipping wind hour",
+							`${spec.date}t${spec.hour}z f${String(spec.forecastHour).padStart(2, "0")}`,
+							error.message || error
+						);
+						return null;
+					})
+				)
 			);
-			// No obs-nudging: the field serves raw. A flipped row axis
-			// once made the model look wrong at home and inspired a
-			// bias correction; cfgrib proved the model was right and
-			// the sampling mirrored. Raw model it is.
-			const homeU = u.values[Math.round(center.row) * dims.nx + Math.round(center.col)];
-			const homeV = v.values[Math.round(center.row) * dims.nx + Math.round(center.col)];
-			const homeSpeed = Math.hypot(homeU, homeV);
-			const homeDir = (Math.atan2(-homeU, -homeV) * 180) / Math.PI;
+			const fields = frames.filter(Boolean).sort((a, b) => (a.time < b.time ? -1 : 1));
+			if (fields.length === 0) {
+				throw new Error("MMM-WeatherMap: no wind hours served");
+			}
+			const home = this.homeSample(fields, lat, lon);
 			console.log(
-				`MMM-WeatherMap: wind field hrrr.t${cycle.hour}z ` +
-				`latlon ${field.nx}x${field.ny} from ${field.lat0.toFixed(2)},${field.lon0.toFixed(2)}, ` +
-				`home ${homeSpeed.toFixed(1)} m/s from ${Math.round((homeDir + 360) % 360)}°`
+				`MMM-WeatherMap: wind timeline ${fields.length} hourly fields, ` +
+				`home ${home.speed.toFixed(1)} m/s from ${home.direction}° at ${home.time}`
 			);
-			this.sendSocketNotification("WIND_FIELD_RESULT", {
-				time: `${cycle.date}T${cycle.hour}:00:00Z`,
-				units: "m/s",
-				nx: field.nx,
-				ny: field.ny,
-				lat0: field.lat0,
-				lon0: field.lon0,
-				dLat: field.dLat,
-				dLon: field.dLon,
-				u: Array.from(field.u),
-				v: Array.from(field.v)
-			});
+			this.sendSocketNotification("WIND_FIELDS_RESULT", { fields });
 		} catch (error) {
-			console.error("MMM-WeatherMap: failed to fetch wind field", error.message || error);
+			console.error("MMM-WeatherMap: failed to fetch wind fields", error.message || error);
 		}
+	},
+
+	/* Home wind at the field nearest now (for the startup log only —
+	 * the badge reads obs, the particles read their own hours). */
+	homeSample: function (fields, lat, lon) {
+		const now = Date.now();
+		let best = fields[0];
+		for (const field of fields) {
+			if (Math.abs(new Date(field.time).getTime() - now) < Math.abs(new Date(best.time).getTime() - now)) {
+				best = field;
+			}
+		}
+		const r = (best.lat0 - lat) / best.dLat;
+		const c = (lon - best.lon0) / best.dLon;
+		const u = grib2.bilinearSample(best.u, best.nx, best.ny, r, c);
+		const v = grib2.bilinearSample(best.v, best.nx, best.ny, r, c);
+		return {
+			speed: Math.hypot(u, v),
+			direction: Math.round(((Math.atan2(-u, -v) * 180) / Math.PI + 360) % 360),
+			time: best.time
+		};
 	},
 
 	fetchFrames: async function () {

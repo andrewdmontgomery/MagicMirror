@@ -191,112 +191,154 @@ describe("latestCycle", () => {
 		const cycle = await helper.latestCycle(3);
 		assert.equal(tried.length, 2);
 		assert.match(tried[0], /hrrr\.t\d\dz\.wrfsfcf00\.grib2\.idx/);
-		assert.equal(cycle.indexText, "idx");
+		assert.match(cycle.date, /^\d{8}$/);
+		assert.match(cycle.hour, /^\d{2}$/);
 	});
 });
 
-describe("fetchWindField", () => {
-	const fs = require("node:fs");
-
-	it("decodes both fixtures into a sane 40x40 region", async () => {
-		const ugrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "ugrd-sample.grb"));
-		const vgrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "vgrd-sample.grb"));
-		const realCycle = helper.latestCycle;
-		const realBytes = helper.fetchBytes;
-		const queued = [ugrd, vgrd];
-		// fetchBytes is stubbed (ranges ignored), but the index text
-		// must still parse — minimal real-format lines.
-		const indexText = [
-			"1:0:d=2026091903:UGRD:10 m above ground:anl:",
-			`2:${ugrd.length}:d=2026091903:VGRD:10 m above ground:anl:`,
-			`3:${ugrd.length + vgrd.length}:d=2026091903:WIND:10 m above ground:0-0 day max fcst:`,
-			""
-		].join("\n");
-		helper.latestCycle = async () => ({ date: "20260919", hour: "03", indexUrl: "stub", indexText });
-		helper.fetchBytes = async () => queued.shift();
-		try {
-			await helper.fetchWindField({ lat: 44.848, lon: -93.043 });
-		} finally {
-			helper.latestCycle = realCycle;
-			helper.fetchBytes = realBytes;
-		}
-		assert.equal(sent.length, 1);
-		assert.equal(sent[0][0], "WIND_FIELD_RESULT");
-		const field = sent[0][1];
-		assert.equal(field.units, "m/s");
-		assert.equal(field.nx, 40);
-		assert.equal(field.ny, 40);
-		assert.equal(field.u.length, 1600);
-		assert.equal(field.v.length, 1600);
-		// Uniform lat/lon grid, row 0 north: home sits inside it.
-		assert.ok(field.dLat > 0 && field.dLon > 0);
-		assert.ok(field.lat0 > 44.848 && field.lat0 < 60, `lat0 ${field.lat0}`);
-		assert.ok(field.lon0 < -93.043 && field.lon0 > -140, `lon0 ${field.lon0}`);
-		let max = 0;
-		let total = 0;
-		for (let i = 0; i < field.u.length; i += 1) {
-			const speed = Math.hypot(field.u[i], field.v[i]);
-			if (speed > max) {
-				max = speed;
-			}
-			total += speed;
-		}
-		assert.ok(max < 50, `regional max ${max} m/s`);
-		assert.ok(total / field.u.length < 15, `regional mean ${total / field.u.length} m/s`);
-		// Nearest node to home matches the cfgrib cross-check
-		// (3.09 m/s) within a generous band.
-		const homeR = Math.round((field.lat0 - 44.848) / field.dLat);
-		const homeC = Math.round((-93.043 - field.lon0) / field.dLon);
-		const homeSpeed = Math.hypot(field.u[homeR * 40 + homeC], field.v[homeR * 40 + homeC]);
-		assert.ok(Math.abs(homeSpeed - 3.09) < 1.0, `home node ${homeSpeed} m/s`);
+describe("fieldHours", () => {
+	it("lists past analyses plus forecasts around the latest run", () => {
+		const specs = helper.fieldHours({ date: "20260919", hour: "03" });
+		assert.equal(specs.length, 4 + 1 + 12);
+		assert.deepEqual(specs[0], { kind: "analysis", date: "20260918", hour: "23", forecastHour: 0 });
+		assert.deepEqual(specs[4], { kind: "analysis", date: "20260919", hour: "03", forecastHour: 0 });
+		assert.deepEqual(specs[5], { kind: "forecast", date: "20260919", hour: "03", forecastHour: 1 });
+		assert.deepEqual(specs[16], { kind: "forecast", date: "20260919", hour: "03", forecastHour: 12 });
 	});
 
-	it("serves the raw field with home matching cfgrib", async () => {
+	it("rolls past analyses across midnight", () => {
+		const specs = helper.fieldHours({ date: "20260919", hour: "01" });
+		assert.deepEqual(specs[0], { kind: "analysis", date: "20260918", hour: "21", forecastHour: 0 });
+	});
+});
+
+describe("validTime", () => {
+	it("adds forecast hours to the run epoch", () => {
+		assert.equal(
+			helper.validTime({ date: "20260919", hour: "03", forecastHour: 2 }),
+			"2026-09-19T05:00:00.000Z"
+		);
+		assert.equal(
+			helper.validTime({ date: "20260918", hour: "23", forecastHour: 0 }),
+			"2026-09-18T23:00:00.000Z"
+		);
+	});
+});
+
+describe("cycleIndex", () => {
+	it("returns sidecar text and throws while unposted", async () => {
+		global.fetch = async (url) => {
+			if (url.includes("wrfsfcf00")) {
+				return { ok: true, text: async () => "idx" };
+			}
+			return { ok: false, status: 403 };
+		};
+		assert.equal(await helper.cycleIndex("20260919", "03", 0), "idx");
+		await assert.rejects(helper.cycleIndex("20260919", "03", 1), /HTTP 403/);
+	});
+});
+
+describe("homeSample", () => {
+	it("picks the field nearest now and reads home", () => {
+		const now = Date.now();
+		const iso = (deltaHours) => new Date(now + deltaHours * 3600 * 1000).toISOString();
+		const flat = (u, v) => ({
+			time: iso(0),
+			nx: 2,
+			ny: 2,
+			lat0: 3,
+			lon0: 0,
+			dLat: 1,
+			dLon: 1,
+			u: [u, u, u, u],
+			v: [v, v, v, v]
+		});
+		const fields = [
+			{ ...flat(0, 0), time: iso(-3) },
+			{ ...flat(3, 4), time: iso(2) },
+			{ ...flat(9, 9), time: iso(9) }
+		];
+		const home = helper.homeSample(fields, 2, 0.5);
+		assert.equal(home.speed, 5);
+		assert.equal(home.direction, Math.round(((Math.atan2(-3, -4) * 180) / Math.PI + 360) % 360));
+	});
+});
+
+describe("fetchWindFields", () => {
+	const fs = require("node:fs");
+	const grib2 = require("../../grib2.js");
+
+	function stubHourlyFetch() {
 		const ugrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "ugrd-sample.grb"));
 		const vgrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "vgrd-sample.grb"));
-		const realCycle = helper.latestCycle;
-		const realBytes = helper.fetchBytes;
-		const queued = [ugrd, vgrd];
-		const indexText = [
-			"1:0:d=2026091903:UGRD:10 m above ground:anl:",
-			`2:${ugrd.length}:d=2026091903:VGRD:10 m above ground:anl:`,
-			`3:${ugrd.length + vgrd.length}:d=2026091903:WIND:10 m above ground:0-0 day max fcst:`,
-			""
-		].join("\n");
-		helper.latestCycle = async () => ({ date: "20260919", hour: "03", indexUrl: "stub", indexText });
-		helper.fetchBytes = async () => queued.shift();
-		try {
-			await helper.fetchWindField({ lat: 44.848, lon: -93.043 });
-		} finally {
-			helper.latestCycle = realCycle;
-			helper.fetchBytes = realBytes;
-		}
-		const field = sent[0][1];
-		// Home node matches the independent cfgrib decode (3.09 m/s
-		// from 96°) — no obs-nudging, raw model throughout.
-		const homeR = Math.round((field.lat0 - 44.848) / field.dLat);
-		const homeC = Math.round((-93.043 - field.lon0) / field.dLon);
-		const homeU = field.u[homeR * 40 + homeC];
-		const homeV = field.v[homeR * 40 + homeC];
-		assert.ok(Math.abs(Math.hypot(homeU, homeV) - 3.09) < 0.5, `home ${homeU},${homeV}`);
-		const dir = ((Math.atan2(-homeU, -homeV) * 180) / Math.PI + 360) % 360;
-		assert.ok(Math.abs(dir - 96) < 10, `home dir ${dir}`);
-		// Far corner: compare against a direct full-grid sample through
-		// an independent path (grib2 projection + bilinear).
-		const grib2 = require("../../grib2.js");
 		const um = grib2.readMessage(ugrd);
 		const vm = grib2.readMessage(vgrd);
-		const fullU = grib2.unpackSimple(um);
-		const fullV = grib2.unpackSimple(vm);
-		const corner = grib2.latLonToGrid(um, field.lat0, field.lon0);
-		const directU = grib2.bilinearSample(fullU, 1799, 1059, corner.row, corner.col);
-		const directV = grib2.bilinearSample(fullV, 1799, 1059, corner.row, corner.col);
-		assert.ok(Math.abs(field.u[0] - directU) < 0.5, `corner u ${field.u[0]} vs ${directU}`);
-		assert.ok(Math.abs(field.v[0] - directV) < 0.5, `corner v ${field.v[0]} vs ${directV}`);
+		const realCycle = helper.latestCycle;
+		const realHour = helper.fetchHourComponents;
+		helper.latestCycle = async () => ({ date: "20260919", hour: "03" });
+		// Every hour decodes the same fixtures (shape/timing test —
+		// values already covered by the Task 3-4 suites).
+		helper.fetchHourComponents = async () => ({
+			message: um,
+			u: grib2.unpackSimple(um),
+			v: grib2.unpackSimple(vm)
+		});
+		return () => {
+			helper.latestCycle = realCycle;
+			helper.fetchHourComponents = realHour;
+		};
+	}
+
+	it("serves past-plus-forecast fields in time order", async () => {
+		const restore = stubHourlyFetch();
+		try {
+			await helper.fetchWindFields({ lat: 44.848, lon: -93.043 });
+		} finally {
+			restore();
+		}
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0][0], "WIND_FIELDS_RESULT");
+		const { fields } = sent[0][1];
+		assert.equal(fields.length, 4 + 1 + 12);
+		const times = fields.map((f) => f.time);
+		assert.deepEqual([...times].sort(), times);
+		assert.equal(times[0], "2026-09-18T23:00:00.000Z");
+		assert.equal(times[4], "2026-09-19T03:00:00.000Z");
+		assert.equal(times[16], "2026-09-19T15:00:00.000Z");
+		for (const field of fields) {
+			assert.equal(field.units, "m/s");
+			assert.equal(field.nx, 40);
+			assert.equal(field.u.length, 1600);
+		}
+		// Home node matches the cfgrib cross-check (3.09 m/s).
+		const first = fields[0];
+		const homeR = Math.round((first.lat0 - 44.848) / first.dLat);
+		const homeC = Math.round((-93.043 - first.lon0) / first.dLon);
+		assert.ok(Math.abs(Math.hypot(first.u[homeR * 40 + homeC], first.v[homeR * 40 + homeC]) - 3.09) < 1.0);
+	});
+
+	it("skips failed hours and still serves the rest", async () => {
+		const restore = stubHourlyFetch();
+	 const realHour = helper.fetchHourComponents;
+		let calls = 0;
+		helper.fetchHourComponents = async (spec) => {
+			calls += 1;
+			if (spec.kind === "forecast") {
+				throw new Error("unposted");
+			}
+			return realHour(spec);
+		};
+		try {
+			await helper.fetchWindFields({ lat: 44.848, lon: -93.043 });
+		} finally {
+			restore();
+		}
+		assert.equal(calls, 17);
+		assert.equal(sent[0][1].fields.length, 5);
 	});
 
 	it("sends nothing without coordinates and never throws", async () => {
-		await helper.fetchWindField({});
+		await helper.fetchWindFields({});
 		assert.equal(sent.length, 0);
 	});
 });
