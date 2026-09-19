@@ -51,6 +51,100 @@
 	white-space: nowrap;
 }
 
+/* Wind legend: numeric speed ticks over a pale-to-deep blue gradient
+ * (0 at the bottom, max at the top) — the macOS Weather wind-map effect. */
+.vector-legend-bar-wind {
+	background: linear-gradient(to top, #e8f6fd 0%, #7fd4f2 55%, #0a7abf 100%);
+}
+
+/* Center wind badge: compass point over speed + unit, like Apple's
+ * ESE / 10 MPH circle. */
+.vector-wind-badge {
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	transform: translate(-50%, -60%);
+	z-index: 4;
+	width: 76px;
+	height: 76px;
+	border-radius: 50%;
+	background: rgba(0, 0, 0, 0.45);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	border: 2px solid rgba(255, 255, 255, 0.9);
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	color: #fff;
+	pointer-events: none;
+}
+
+.vector-wind-badge-dir {
+	font-size: 12px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+}
+
+.vector-wind-badge-speed {
+	font-size: 24px;
+	font-weight: 800;
+	line-height: 1.1;
+}
+
+.vector-wind-badge-unit {
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+}
+
+/* Particle streak canvas: above the basemap, below pills/controls. */
+.vector-particles {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	z-index: 2;
+	pointer-events: none;
+}
+
+/* Manual view toggle: dark pill group matching the reset control. */
+.vector-view-wrap {
+	display: flex;
+	background: rgba(0, 0, 0, 0.55);
+	-webkit-backdrop-filter: blur(10px);
+	backdrop-filter: blur(10px);
+	border-radius: 8px;
+	overflow: hidden;
+}
+
+.vector-view-wrap .vector-view {
+	width: 34px;
+	height: 34px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	cursor: pointer;
+	background: transparent;
+	border: none;
+	font-size: 17px;
+	opacity: 0.55;
+}
+
+.vector-view-wrap .vector-view-active {
+	opacity: 1;
+	background: rgba(90, 200, 250, 0.25);
+}
+
+/* Wind timeline date line under the "Wind Speed" title. */
+.vector-tl-date {
+	font-size: 12px;
+	font-weight: 400;
+	margin-bottom: 6px;
+	white-space: nowrap;
+	opacity: 0.85;
+}
+
 /* Apple-style history timeline (past frames only). */
 .vector-timeline {
 	position: absolute;
