@@ -19,10 +19,16 @@ const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
-/* Trail fade per frame (higher = longer tails) and drawn streak length
- * as a multiple of the per-frame advection step. */
-const WIND_TRAIL_RETENTION = 0.96;
-const WIND_STREAK_LENGTH = 1.4;
+/* Trail length in history points per particle. Trails are redrawn from
+ * stored positions every frame (not faded bitmaps), so this alone
+ * controls tail length. Long enough to read as streaks even at a
+ * 10 mph crawl (~0.4px/frame). */
+const WIND_TRAIL_POINTS = 48;
+/* Dying trails linger this many frames as headless ghosts, fading out
+ * instead of popping. The cap must clear the steady-state ghost flow
+ * (~2.4 respawns/frame × 45 frames ≈ 108) or it truncates the fade. */
+const GHOST_FRAMES = 45;
+const MAX_GHOSTS = 120;
 
 Module.register("MMM-WeatherMap", {
 	defaults: {
@@ -71,6 +77,7 @@ Module.register("MMM-WeatherMap", {
 		this.windIndex = 0;
 		this.windCallout = null;
 		this.windBadge = null;
+		this.ghosts = [];
 		this.particles = [];
 		this.particleRaf = null;
 		this.particleCanvas = null;
@@ -194,10 +201,12 @@ Module.register("MMM-WeatherMap", {
 
 	/* Screen-space drift per animation frame for a uniform wind field.
 	 * directionDeg is meteorological (where the wind blows FROM); the
-	 * particle moves toward direction+180. Pure — unit-tested. */
+	 * particle moves toward direction+180. Deliberately sedate: even
+	 * a 75 mph max reads as a drift (~1.6px/frame), not a dash, so a
+	 * 10 mph breeze crawls. Pure — unit-tested. */
 	windDriftVector: function (directionDeg, speed, max) {
 		const radians = ((directionDeg || 0) + 180) * (Math.PI / 180);
-		const magnitude = 0.3 + (Math.min(Math.max(speed || 0, 0), max || 75) / (max || 75)) * 2.2;
+		const magnitude = 0.2 + (Math.min(Math.max(speed || 0, 0), max || 75) / (max || 75)) * 1.4;
 		return {
 			dx: Math.sin(radians) * magnitude,
 			dy: -Math.cos(radians) * magnitude
@@ -1069,10 +1078,12 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	/* Uniform-flow particle overlay: ~250 white streaks advected along
-	 * the current slot's wind vector, with a translucent fade for
-	 * motion-blur trails (not full clears). Particles are anchored
-	 * geographically (lon/lat) and reprojected every frame, so they
-	 * pan and zoom WITH the basemap instead of floating over it.
+	 * the current slot's wind vector. Each particle keeps a trail of
+	 * past lon/lat positions; every frame the canvas is fully cleared
+	 * and all trails redrawn from reprojected history. Full clears
+	 * (never translucent fades) mean faded trails return the map to
+	 * its exact base color — no residue haze — and reprojecting every
+	 * point means drags carry dots AND tails along rigidly.
 	 * Runs only in the wind view; the HRRR gridded field will replace
 	 * the uniform vector with bilinear sampling at the same call site. */
 	startParticles: function () {
@@ -1091,6 +1102,7 @@ Module.register("MMM-WeatherMap", {
 			return;
 		}
 		this.particles = [];
+		this.ghosts = [];
 		for (let i = 0; i < WIND_PARTICLE_COUNT; i += 1) {
 			this.particles.push(this.spawnParticle(canvas.width, canvas.height));
 		}
@@ -1099,9 +1111,9 @@ Module.register("MMM-WeatherMap", {
 				this.particleRaf = null;
 				return;
 			}
-			if (this.playing) {
-				this.advectParticles(ctx2d, canvas.width, canvas.height);
-			}
+			// Paused: redraw from stored history without advancing, so
+			// the field still tracks the map when it moves.
+			this.advectParticles(ctx2d, canvas.width, canvas.height, this.playing);
 			this.particleRaf = requestAnimationFrame(step);
 		};
 		this.particleRaf = requestAnimationFrame(step);
@@ -1113,52 +1125,116 @@ Module.register("MMM-WeatherMap", {
 		}
 		this.particleRaf = null;
 		this.particles = [];
+		this.ghosts = [];
 	},
 
 	/* Birth a particle at a random on-screen point, stored as lon/lat
-	 * so it sticks to the map. Pure given the map stub — unit-tested. */
+	 * so it sticks to the map, with a one-point trail. Pure given the
+	 * map stub — unit-tested. */
 	spawnParticle: function (width, height) {
 		const point = this.map.unproject([Math.random() * width, Math.random() * height]);
 		return {
 			lon: point.lng,
 			lat: point.lat,
 			age: 0,
-			maxAge: 60 + Math.floor(Math.random() * 90)
+			// Long lives keep respawn churn (and the ghost flow it
+			// feeds) under the ghost cap — see MAX_GHOSTS.
+			maxAge: 120 + Math.floor(Math.random() * 120),
+			trail: [{ lon: point.lng, lat: point.lat }]
 		};
 	},
 
-	advectParticles: function (ctx2d, width, height) {
+	/* Advance the field one frame (or just redraw it when advance is
+	 * false): clear everything, move each particle along the current
+	 * slot's wind vector, append to its trail history, and stroke each
+	 * trail oldest-to-newest under a transparent-to-white gradient.
+	 * Because history is geographic, every point reprojects — pans
+	 * and zooms carry whole trails rigidly, with no bitmap to smear. */
+	advectParticles: function (ctx2d, width, height, advance = true) {
 		const slot = this.currentWindSlot();
 		const scale = this.windLegendScale(this.config.units);
 		const drift = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
-		ctx2d.globalCompositeOperation = "destination-in";
-		ctx2d.fillStyle = `rgba(0, 0, 0, ${WIND_TRAIL_RETENTION})`;
-		ctx2d.fillRect(0, 0, width, height);
-		ctx2d.globalCompositeOperation = "source-over";
-		ctx2d.strokeStyle = "rgba(255, 255, 255, 0.6)";
-		ctx2d.lineWidth = 1.5;
+		// Full clear, never a translucent fade: the map underneath
+		// returns to its exact base color every frame. No residue.
+		ctx2d.clearRect(0, 0, width, height);
+		ctx2d.lineWidth = 2;
 		ctx2d.lineCap = "round";
-		ctx2d.beginPath();
+		ctx2d.lineJoin = "round";
+		if (!Array.isArray(this.ghosts)) {
+			this.ghosts = [];
+		}
 		this.particles.forEach((p) => {
-			// Reproject every frame: the map may have panned or zoomed
-			// since the last tick, and the particle follows the basemap.
-			const screen = this.map.project([p.lon, p.lat]);
-			const nextX = screen.x + drift.dx;
-			const nextY = screen.y + drift.dy;
-			ctx2d.moveTo(screen.x, screen.y);
-			ctx2d.lineTo(screen.x + drift.dx * WIND_STREAK_LENGTH, screen.y + drift.dy * WIND_STREAK_LENGTH);
-			const next = this.map.unproject([nextX, nextY]);
-			p.lon = next.lng;
-			p.lat = next.lat;
-			p.age += 1;
-			if (p.age > p.maxAge || nextX < 0 || nextX > width || nextY < 0 || nextY > height || Math.random() < 0.01) {
-				const fresh = this.spawnParticle(width, height);
-				p.lon = fresh.lon;
-				p.lat = fresh.lat;
-				p.age = 0;
-				p.maxAge = fresh.maxAge;
+			if (advance) {
+				const screen = this.map.project([p.lon, p.lat]);
+				const next = this.map.unproject([screen.x + drift.dx, screen.y + drift.dy]);
+				p.lon = next.lng;
+				p.lat = next.lat;
+				p.trail.push({ lon: p.lon, lat: p.lat });
+				while (p.trail.length > WIND_TRAIL_POINTS) {
+					p.trail.shift();
+				}
+				p.age += 1;
+				const head = this.map.project([p.lon, p.lat]);
+				if (p.age > p.maxAge || head.x < 0 || head.x > width || head.y < 0 || head.y > height || Math.random() < 0.004) {
+					this.ghostTrail(p);
+					const fresh = this.spawnParticle(width, height);
+					p.lon = fresh.lon;
+					p.lat = fresh.lat;
+					p.trail = fresh.trail;
+					p.age = 0;
+					p.maxAge = fresh.maxAge;
+				}
 			}
 		});
+		// Ghosts under live trails so fresh heads stay crisp on top.
+		this.ghosts.forEach((g) => {
+			this.strokeTrail(ctx2d, g, g.life);
+			if (advance) {
+				g.life -= 1 / GHOST_FRAMES;
+			}
+		});
+		if (advance) {
+			this.ghosts = this.ghosts.filter((g) => g.life > 0);
+		}
+		this.particles.forEach((p) => {
+			this.strokeTrail(ctx2d, p, 1);
+		});
+	},
+
+	/* A dying particle's trail detaches into a headless ghost that
+	 * keeps reprojecting while its alpha runs down — the tail fades
+	 * instead of popping. Copies history (never the live reference). */
+	ghostTrail: function (particle) {
+		if (!particle.trail || particle.trail.length < 2) {
+			return;
+		}
+		this.ghosts.push({ trail: particle.trail.slice(), life: 1 });
+		if (this.ghosts.length > MAX_GHOSTS) {
+			this.ghosts.splice(0, this.ghosts.length - MAX_GHOSTS);
+		}
+	},
+
+	/* One trail: a single path through its reprojected history points,
+	 * fading transparent (oldest) to white (newest), scaled by alpha
+	 * for ghosts. */
+	strokeTrail: function (ctx2d, particle, alpha = 1) {
+		const projected = particle.trail.map((t) => this.map.project([t.lon, t.lat]));
+		if (projected.length < 2) {
+			return;
+		}
+		const first = projected[0];
+		const last = projected[projected.length - 1];
+		const gradient = ctx2d.createLinearGradient(first.x, first.y, last.x, last.y);
+		gradient.addColorStop(0, "rgba(255, 255, 255, 0)");
+		gradient.addColorStop(1, "rgba(255, 255, 255, 0.6)");
+		ctx2d.strokeStyle = gradient;
+		ctx2d.globalAlpha = alpha;
+		ctx2d.beginPath();
+		ctx2d.moveTo(first.x, first.y);
+		for (let i = 1; i < projected.length; i += 1) {
+			ctx2d.lineTo(projected[i].x, projected[i].y);
+		}
 		ctx2d.stroke();
+		ctx2d.globalAlpha = 1;
 	}
 });

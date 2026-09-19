@@ -396,22 +396,32 @@ describe("wind scrub and badge", () => {
 	});
 });
 
-describe("geo-anchored particles", () => {
-	function geoStub() {
-		const calls = { moveTo: [], lineTo: [], unprojected: [] };
+describe("history-trail particles", () => {
+	function trailStub() {
+		const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [] };
 		const ctx2d = {
+			clearRect: (x, y, w, h) => calls.cleared.push([x, y, w, h]),
+			createLinearGradient: (x0, y0, x1, y1) => {
+				calls.gradients.push([x0, y0, x1, y1]);
+				return { addColorStop: (offset, color) => calls.stops.push([offset, color]) };
+			},
+			beginPath: () => {},
 			moveTo: (x, y) => calls.moveTo.push([x, y]),
 			lineTo: (x, y) => calls.lineTo.push([x, y]),
-			beginPath: () => {},
-			stroke: () => {},
-			fillRect: () => {}
+			stroke: () => {}
 		};
-		// Identity-ish projection in stub space: screen = geo * 10.
+		// Identity-ish projection in stub space: screen = geo * 10
+		// plus a mutable pan offset, so tests simulate drags by
+		// mutating map.pan.
 		const map = {
-			project: ([lon, lat]) => ({ x: lon * 10, y: lat * 10 }),
-			unproject: ([x, y]) => {
+			pan: { x: 0, y: 0 },
+			project: function (p) {
+				const [lon, lat] = Array.isArray(p) ? p : [p.lng, p.lat];
+				return { x: lon * 10 + this.pan.x, y: lat * 10 + this.pan.y };
+			},
+			unproject: function ([x, y]) {
 				calls.unprojected.push([x, y]);
-				return { lng: x / 10, lat: y / 10 };
+				return { lng: (x - this.pan.x) / 10, lat: (y - this.pan.y) / 10 };
 			}
 		};
 		return { calls, ctx2d, map };
@@ -421,51 +431,187 @@ describe("geo-anchored particles", () => {
 		return {
 			map,
 			particles,
+			ghosts: [],
 			config: { units: "imperial" },
 			currentWindSlot: () => ({ direction: 0, speed: 75 }),
 			windLegendScale: def.windLegendScale,
 			windDriftVector: def.windDriftVector,
-			spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); }
+			spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
+			ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
+			strokeTrail: function (c2d, p, a) { return def.strokeTrail.call(this, c2d, p, a); }
 		};
 	}
 
-	it("advects geographically and draws elongated streaks", () => {
-		const { calls, ctx2d, map } = geoStub();
-		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000 }];
-		const c = particleCtx(map, particles);
+	function withoutRespawn(fn) {
+		// 0.5: no random-respawns, long lifespans, and mid-canvas
+		// spawns — a high value like 0.99 births particles at 396px
+		// where max-speed downward drift exits the 400px stub canvas
+		// every other frame.
 		const realRandom = Math.random;
-		Math.random = () => 0.99;
+		Math.random = () => 0.5;
 		try {
-			def.advectParticles.call(c, ctx2d, 400, 400);
+			fn();
 		} finally {
 			Math.random = realRandom;
 		}
-		// From-north at max speed: 2.5px/frame straight down-stub.
-		assert.deepEqual(calls.moveTo, [[10, 20]]);
-		assert.ok(Math.abs(calls.lineTo[0][0] - 10) < 1e-9);
-		assert.ok(Math.abs(calls.lineTo[0][1] - (20 + 2.5 * 1.4)) < 1e-9);
+	}
+
+	it("advects geographically and grows the trail", () => {
+		const { ctx2d, map } = trailStub();
+		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
+		const c = particleCtx(map, particles);
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		// From-north at max speed: 1.6px/frame straight down-stub.
 		assert.ok(Math.abs(particles[0].lon - 1) < 1e-9);
-		assert.ok(Math.abs(particles[0].lat - 2.25) < 1e-9);
+		assert.ok(Math.abs(particles[0].lat - 2.16) < 1e-9);
+		assert.equal(particles[0].trail.length, 2);
+		assert.ok(Math.abs(particles[0].trail[1].lat - 2.16) < 1e-9);
 	});
 
-	it("respawns aged-out particles with a fresh lifespan", () => {
-		const { ctx2d, map } = geoStub();
-		const particles = [{ lon: 1, lat: 2, age: 5000, maxAge: 10 }];
+	it("fully clears every frame so no residue accumulates", () => {
+		const { calls, ctx2d, map } = trailStub();
+		const c = particleCtx(map, [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }]);
+		withoutRespawn(() => {
+			def.advectParticles.call(c, ctx2d, 400, 400);
+			def.advectParticles.call(c, ctx2d, 400, 400);
+		});
+		// Opaque clearRect per frame — never a translucent fade, which
+		// is what left the permanent haze over the base map.
+		assert.deepEqual(calls.cleared, [[0, 0, 400, 400], [0, 0, 400, 400]]);
+	});
+
+	it("strokes oldest-to-newest under a fading gradient", () => {
+		const { calls, ctx2d, map } = trailStub();
+		const c = particleCtx(map, [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }]);
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		assert.deepEqual(calls.gradients, [[10, 20, 10, 21.6]]);
+		assert.deepEqual(calls.stops, [[0, "rgba(255, 255, 255, 0)"], [1, "rgba(255, 255, 255, 0.6)"]]);
+		assert.deepEqual(calls.moveTo, [[10, 20]]);
+		assert.ok(Math.abs(calls.lineTo[0][0] - 10) < 1e-9);
+		assert.ok(Math.abs(calls.lineTo[0][1] - 21.6) < 1e-9);
+	});
+
+	it("caps trail history", () => {
+		const { ctx2d, map } = trailStub();
+		const trail = [];
+		for (let i = 0; i < 60; i += 1) {
+			trail.push({ lon: 1, lat: 2 });
+		}
+		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail }];
+		const c = particleCtx(map, particles);
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		assert.equal(particles[0].trail.length, 48);
+	});
+
+	it("respawns reset the trail with a fresh lifespan", () => {
+		const { ctx2d, map } = trailStub();
+		const trail = [];
+		for (let i = 0; i < 10; i += 1) {
+			trail.push({ lon: 1, lat: 2 });
+		}
+		const particles = [{ lon: 1, lat: 2, age: 5000, maxAge: 10, trail }];
 		const c = particleCtx(map, particles);
 		def.advectParticles.call(c, ctx2d, 400, 400);
 		assert.equal(particles[0].age, 0);
-		assert.ok(particles[0].maxAge >= 60 && particles[0].maxAge < 150);
+		assert.equal(particles[0].trail.length, 1);
+		assert.ok(particles[0].maxAge >= 120 && particles[0].maxAge < 240);
 	});
 
-	it("spawns within the visible canvas", () => {
-		const { calls, map } = geoStub();
+	it("respawns leave a fading ghost instead of popping", () => {
+		const { ctx2d, map } = trailStub();
+		const trail = [{ lon: 1, lat: 1.9 }, { lon: 1, lat: 2 }, { lon: 1, lat: 2.1 }];
+		const particles = [{ lon: 1, lat: 2.1, age: 5000, maxAge: 10, trail }];
+		const c = particleCtx(map, particles);
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		assert.equal(c.ghosts.length, 1);
+		// The ghost keeps the full history including the final push
+		// (the test's trail array is the same live reference, so
+		// compare against a literal, not the mutated array).
+		assert.equal(c.ghosts[0].trail.length, 4);
+		assert.deepEqual(c.ghosts[0].trail.slice(0, 3), [
+			{ lon: 1, lat: 1.9 },
+			{ lon: 1, lat: 2 },
+			{ lon: 1, lat: 2.1 }
+		]);
+		assert.notEqual(c.ghosts[0].trail, trail);
+		// Forty-six advancing frames run the 45-frame fade to zero.
+		withoutRespawn(() => {
+			for (let i = 0; i < 45; i += 1) {
+				def.advectParticles.call(c, ctx2d, 400, 400);
+			}
+		});
+		assert.equal(c.ghosts.length, 0);
+	});
+
+	it("draws ghosts under live trails at their fading alpha", () => {
+		const alphas = [];
+		const { ctx2d, map } = trailStub();
+		ctx2d.stroke = () => alphas.push(ctx2d.globalAlpha);
+		const ghosts = [{ trail: [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }], life: 0.5 }];
+		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
+		const c = particleCtx(map, particles);
+		c.ghosts = ghosts;
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		// Ghost first at 0.5, then the live particle at full alpha.
+		assert.deepEqual(alphas, [0.5, 1]);
+		assert.equal(ctx2d.globalAlpha, 1);
+	});
+
+	it("caps concurrent ghosts, evicting the oldest", () => {
+		const { ctx2d, map } = trailStub();
+		const ghosts = [];
+		for (let i = 0; i < 120; i += 1) {
+			ghosts.push({ trail: [{ lon: i, lat: 0 }, { lon: i, lat: 0.1 }], life: 1 });
+		}
+		const particles = [{ lon: 1, lat: 2, age: 5000, maxAge: 10, trail: [{ lon: 1, lat: 2 }, { lon: 1, lat: 2.1 }] }];
+		const c = particleCtx(map, particles);
+		c.ghosts = ghosts;
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		assert.equal(c.ghosts.length, 120);
+		assert.notEqual(c.ghosts[0].trail[0].lon, 0);
+	});
+
+	it("paused redraws ghosts without decaying them", () => {
+		const { ctx2d, map } = trailStub();
+		const c = particleCtx(map, []);
+		c.ghosts = [{ trail: [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }], life: 0.5 }];
+		def.advectParticles.call(c, ctx2d, 400, 400, false);
+		assert.equal(c.ghosts.length, 1);
+		assert.equal(c.ghosts[0].life, 0.5);
+	});
+
+	it("redraws without advancing when paused, tracking pans", () => {
+		const { calls, ctx2d, map } = trailStub();
+		const particles = [{ lon: 1, lat: 2, age: 7, maxAge: 1000, trail: [{ lon: 0.9, lat: 1.9 }, { lon: 1, lat: 2 }] }];
+		const c = particleCtx(map, particles);
+		map.pan = { x: 10, y: 5 };
+		def.advectParticles.call(c, ctx2d, 400, 400, false);
+		assert.equal(particles[0].age, 7);
+		assert.equal(particles[0].trail.length, 2);
+		assert.deepEqual(calls.cleared, [[0, 0, 400, 400]]);
+		// Both history points reprojected through the pan offset.
+		assert.deepEqual(calls.moveTo, [[19, 24]]);
+		assert.deepEqual(calls.lineTo, [[20, 25]]);
+	});
+
+	it("spawns with a one-point trail inside the canvas", () => {
+		const { calls, map } = trailStub();
 		const c = particleCtx(map, []);
 		const p = def.spawnParticle.call(c, 400, 400);
 		const [x, y] = calls.unprojected[0];
 		assert.ok(x >= 0 && x <= 400);
 		assert.ok(y >= 0 && y <= 400);
-		assert.equal(typeof p.lon, "number");
-		assert.equal(typeof p.lat, "number");
+		assert.equal(p.trail.length, 1);
+		assert.equal(p.trail[0].lon, p.lon);
+		assert.equal(p.trail[0].lat, p.lat);
+	});
+
+	it("skips degenerate single-point trails", () => {
+		const { calls, ctx2d, map } = trailStub();
+		const c = particleCtx(map, []);
+		def.strokeTrail.call(c, ctx2d, { trail: [{ lon: 1, lat: 2 }] });
+		assert.equal(calls.gradients.length, 0);
+		assert.equal(calls.moveTo.length, 0);
 	});
 });
 
