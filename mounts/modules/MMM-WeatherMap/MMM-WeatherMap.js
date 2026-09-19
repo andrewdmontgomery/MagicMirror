@@ -183,8 +183,11 @@ Module.register("MMM-WeatherMap", {
 		if (typeof this.sendNotification === "function") {
 			this.sendNotification("WEATHERMAP_VIEW_CHANGED", { view });
 		}
-		if (typeof this.updateDom === "function") {
-			this.updateDom(this.config.animationSpeed);
+		// No updateDom: it fades the whole module out and back in.
+		// Chrome swaps in place via rebuildOverlays when the map is
+		// live; the boot-time getDom covers the pre-map case.
+		if (this.mapDiv) {
+			this.rebuildOverlays();
 		}
 		return true;
 	},
@@ -450,23 +453,16 @@ Module.register("MMM-WeatherMap", {
 			if (payload && Array.isArray(payload.fields) && payload.fields.length > 0) {
 				this.windFields = payload.fields;
 				this.windIndex = this.defaultWindIndex();
-				if (this.isWindView()) {
-					this.removeParticleLayer();
-					this.updateDom(this.config.animationSpeed);
-				} else {
-					this.updateTimeline();
-				}
+				// In-place refresh (badge/timeline/layers follow via
+				// the animation restart) — never updateDom: the module
+				// fade would flash the whole view every data refresh.
+				this.syncContentToView();
 			}
 		} else if (notification === "WIND_SUMMARY_RESULT") {
 			if (payload && payload.hourly) {
 				this.wind = payload;
 				this.windIndex = this.defaultWindIndex();
-				if (this.isWindView()) {
-					this.removeParticleLayer();
-					this.updateDom(this.config.animationSpeed);
-				} else {
-					this.updateTimeline();
-				}
+				this.syncContentToView();
 			}
 		} else if (notification === "VECTOR_FRAMES_RESULT") {
 			if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {

@@ -350,12 +350,14 @@ describe("setView", () => {
 		assert.deepEqual(redrawn, []);
 	});
 
-	it("switches, broadcasts, and redraws", () => {
+	it("switches and broadcasts without a module redraw", () => {
+		// No updateDom: it fades the whole module out and back in.
+		// Chrome swaps in place; content crossfades on the live map.
 		const { c, notified, redrawn } = viewCtx("precip");
 		assert.equal(def.setView.call(c, "wind"), true);
 		assert.equal(c.view, "wind");
 		assert.deepEqual(notified, [["WEATHERMAP_VIEW_CHANGED", { view: "wind" }]]);
-		assert.equal(redrawn.length, 1);
+		assert.deepEqual(redrawn, []);
 	});
 
 	it("routes WEATHERMAP_SET_VIEW notifications to setView", () => {
