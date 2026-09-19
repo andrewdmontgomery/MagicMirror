@@ -816,30 +816,41 @@ describe("wind slots", () => {
 		assert.equal(def.activeField.call(ctx({ windFields: [] })), null);
 	});
 
-	it("labels the scrubbed hour next to the date", () => {
-		const made = [];
+	it("paints wind progress from the scrubbed slot", () => {
 		const c = ctx({
-			timelineDateBase: "Friday, September 18, 2026",
-			timelineLabel: { set textContent(v) { made.push(v); } },
+			timelineProgress: { style: {} },
 			timelineTicks: { hasChildNodes: () => true },
-			timelineTrack: {
-				children: [
-					{ classList: { toggle: () => {} } },
-					{ classList: { toggle: () => {} } },
-					{ classList: { toggle: () => {} } }
-				]
-			},
-			windIndex: 2
+			timelineTrack: { children: [] },
+			windIndex: 2,
+			view: "wind",
+			config: { animationSpeedMs: 800 }
 		});
 		c.windSlots = () => [
 			{ time: 1, isNow: false, fieldIndex: 0 },
 			{ time: 2, isNow: true, fieldIndex: 1 },
 			{ time: 3, isNow: false, fieldIndex: 2 }
 		];
-		c.formatHourLabel = (t) => def.formatHourLabel.call(c, t);
 		def.updateWindTimeline.call(c);
-		const hour = def.formatHourLabel.call(c, 3);
-		assert.deepEqual(made, [`Friday, September 18, 2026 · ${hour}`]);
+		assert.equal(c.timelineProgress.style.width, "100%");
+	});
+
+	it("glides progress between frames on wall-clock time", () => {
+		assert.equal(def.glideProgress.call(ctx(), 2, 5, 400, 800), 62.5);
+		assert.equal(def.glideProgress.call(ctx(), 2, 5, 900, 800), 75);
+		assert.equal(def.glideProgress.call(ctx(), 2, 5, -50, 800), 50);
+		assert.equal(def.glideProgress.call(ctx(), 0, 1, 0, 800), 100);
+	});
+
+	it("paints precip progress from the frame index", () => {
+		const frames = [{ time: 1 }, { time: 2 }, { time: 3 }, { time: 4 }, { time: 5 }];
+		const c = ctx({
+			frames: { frames },
+			frameIndex: 2,
+			timelineProgress: { style: {} },
+			config: { animationSpeedMs: 800 }
+		});
+		def.paintProgress.call(c);
+		assert.equal(c.timelineProgress.style.width, "50%");
 	});
 });
 

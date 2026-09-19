@@ -73,6 +73,8 @@ Module.register("MMM-WeatherMap", {
 		this.libError = null;
 		this.frames = null;
 		this.frameIndex = 0;
+		this.stepStart = null;
+		this.progressTimer = null;
 		this.positionIndex = 0;
 		this.loopCount = 0;
 		this.frameTimer = null;
@@ -776,6 +778,15 @@ Module.register("MMM-WeatherMap", {
 			clearInterval(this.frameTimer);
 			this.frameTimer = null;
 		}
+		if (this.progressTimer) {
+			clearInterval(this.progressTimer);
+			this.progressTimer = null;
+		}
+		// Glide ticker: repaints just the progress fill ten times a
+		// second so it sweeps continuously between frame swaps.
+		this.progressTimer = setInterval(() => {
+			this.paintProgress();
+		}, 100);
 		if (this.isWindView()) {
 			this.restartWindAnimation();
 			return;
@@ -865,6 +876,7 @@ Module.register("MMM-WeatherMap", {
 	/* Display one wind slot: badge plus timeline label + progress. */
 	showWindFrame: function (index) {
 		this.windIndex = index;
+		this.stepStart = Date.now();
 		this.updateWindBadge();
 		this.updateTimeline();
 	},
@@ -876,6 +888,7 @@ Module.register("MMM-WeatherMap", {
 			return;
 		}
 		this.frameIndex = index;
+		this.stepStart = Date.now();
 		if (paint && this.map && this.map.getSource(`rainviewer-${index}`)) {
 			if (prev !== undefined && this.map.getSource(`rainviewer-${prev}`)) {
 				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
@@ -897,9 +910,15 @@ Module.register("MMM-WeatherMap", {
 		this.updatePlayButton();
 		if (this.playing) {
 			this.restartAnimation();
-		} else if (this.frameTimer) {
-			clearInterval(this.frameTimer);
-			this.frameTimer = null;
+		} else {
+			if (this.frameTimer) {
+				clearInterval(this.frameTimer);
+				this.frameTimer = null;
+			}
+			if (this.progressTimer) {
+				clearInterval(this.progressTimer);
+				this.progressTimer = null;
+			}
 		}
 	},
 
@@ -971,13 +990,12 @@ Module.register("MMM-WeatherMap", {
 		this.timelineLabel = document.createElement("div");
 		this.timelineLabel.className = "vector-tl-date light";
 		const now = new Date(Date.now());
-		this.timelineDateBase = now.toLocaleDateString("en-US", {
+		this.timelineLabel.textContent = now.toLocaleDateString("en-US", {
 			weekday: "long",
 			month: "long",
 			day: "numeric",
 			year: "numeric"
 		});
-		this.timelineLabel.textContent = this.timelineDateBase;
 		main.appendChild(this.timelineLabel);
 
 		this.timelineTrack = document.createElement("div");
@@ -1176,14 +1194,11 @@ Module.register("MMM-WeatherMap", {
 		this.timelineLabel.textContent = isLatest
 			? "Now"
 			: this.formatFrameTime(frame.time);
-		if (this.timelineProgress) {
-			this.timelineProgress.style.width = `${this.trackProgress(this.frameIndex, frames.length)}%`;
-		}
+		this.paintProgress();
 	},
 
-	/* Wind track progress plus the scrubbed hour: the date line reads
-	 * "date · hour" so both ends of the past→future timeline stay
-	 * truthful (the badge separately always reads current). */
+	/* Wind track progress; the date line above stays a plain date
+	 * (the track's own hour labels say which hour is selected). */
 	updateWindTimeline: function () {
 		if (!this.timelineTrack || !this.timelineTicks) {
 			return;
@@ -1191,15 +1206,29 @@ Module.register("MMM-WeatherMap", {
 		if (!this.timelineTicks.hasChildNodes()) {
 			this.buildTimelineTicks();
 		}
-		const slots = this.windSlots();
-		const slot = slots[Math.min(this.windIndex, slots.length - 1)];
-		if (slot && this.timelineLabel) {
-			const base = this.timelineDateBase || "";
-			const hour = slot.isNow ? "Now" : this.formatHourLabel(slot.time);
-			this.timelineLabel.textContent = base ? `${base} · ${hour}` : hour;
+		this.paintProgress();
+	},
+
+	/* Frame position with wall-clock glide: the integer frame plus the
+	 * fraction of the current step elapsed, so the progress bar moves
+	 * continuously instead of hopping per frame. Pure — tested. */
+	glideProgress: function (index, total, elapsedMs, stepMs) {
+		const pos = index + Math.min(Math.max(elapsedMs, 0), stepMs) / stepMs;
+		return this.trackProgress(pos, total);
+	},
+
+	/* Paint the progress fill for the current view and frame, gliding
+	 * from the last frame swap. No-op before the track exists. */
+	paintProgress: function () {
+		if (!this.timelineProgress) {
+			return;
 		}
-		if (this.timelineProgress) {
-			this.timelineProgress.style.width = `${this.trackProgress(this.windIndex, slots.length)}%`;
+		const elapsed = Date.now() - (this.stepStart || Date.now());
+		if (this.isWindView()) {
+			const slots = this.windSlots();
+			this.timelineProgress.style.width = `${this.glideProgress(this.windIndex, slots.length, elapsed, this.config.animationSpeedMs)}%`;
+		} else if (this.frames) {
+			this.timelineProgress.style.width = `${this.glideProgress(this.frameIndex, this.frames.frames.length, elapsed, this.config.animationSpeedMs)}%`;
 		}
 	},
 
