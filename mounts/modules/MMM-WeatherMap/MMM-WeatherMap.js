@@ -531,7 +531,7 @@ Module.register("MMM-WeatherMap", {
 		return (
 			'<svg viewBox="0 0 62 66" width="62" height="66" aria-hidden="true">' +
 			'<path d="M24.53,53.15 L31,62 L37.47,53.15 A25,25 0 1 0 24.53,53.15 Z" fill="#2C353C" stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linejoin="round"/>' +
-			`<text class="vector-wind-badge-dir" x="31" y="22" text-anchor="middle">${direction}</text>` +
+			`<text class="vector-wind-badge-dir" x="31" y="17" text-anchor="middle">${direction}</text>` +
 			`<text class="vector-wind-badge-speed" x="31" y="37" text-anchor="middle">${speed}</text>` +
 			`<text class="vector-wind-badge-unit" x="31" y="48" text-anchor="middle">${unit}</text>` +
 			"</svg>"

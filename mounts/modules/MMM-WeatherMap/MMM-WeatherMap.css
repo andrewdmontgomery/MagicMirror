@@ -78,29 +78,29 @@
 	display: block;
 }
 
-/* SVG readout text: white over the opaque callout fill. */
+/* SVG readout text inherits the mirror font; each row sets its own fill. */
 .vector-wind-badge text {
-	fill: #fff;
 	font-family: inherit;
 }
 
 .vector-wind-badge-dir {
-	font-size: 10px;
+	font-size: 9px;
 	font-weight: 700;
 	letter-spacing: 0.5px;
-	fill: rgba(255, 255, 255, 0.65);
+	fill: #868d93;
 }
 
 .vector-wind-badge-speed {
 	font-size: 22px;
 	font-weight: 800;
+	fill: #fff;
 }
 
 .vector-wind-badge-unit {
-	font-size: 8px;
+	font-size: 9px;
 	font-weight: 700;
 	letter-spacing: 0.5px;
-	fill: rgba(255, 255, 255, 0.65);
+	fill: #868d93;
 }
 
 /* Particle streak canvas: above the basemap, below pills/controls. */
