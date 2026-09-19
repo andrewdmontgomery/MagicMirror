@@ -54,6 +54,9 @@ Module.register("MMM-WeatherMap", {
 		/* Open-Meteo wind refresh (uniform field until the HRRR gridded
 		 * field lands; then this payload grows a `grids` member). */
 		windUpdateInterval: 30 * 60 * 1000,
+		/* HRRR gridded field refresh — the model runs hourly but the
+		 * field barely changes at mirror scale. */
+		windFieldUpdateInterval: 6 * 60 * 60 * 1000,
 		windHoursPast: 4,
 		windHoursFuture: 12
 	},
@@ -75,6 +78,7 @@ Module.register("MMM-WeatherMap", {
 		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
 		this.wind = null;
 		this.windIndex = 0;
+		this.windField = null;
 		this.windCallout = null;
 		this.windBadge = null;
 		this.ghosts = [];
@@ -84,12 +88,16 @@ Module.register("MMM-WeatherMap", {
 		this.getStyle();
 		this.getFrames();
 		this.getWind();
+		this.getWindField();
 		setInterval(() => {
 			this.getFrames();
 		}, this.config.updateInterval);
 		setInterval(() => {
 			this.getWind();
 		}, this.config.windUpdateInterval);
+		setInterval(() => {
+			this.getWindField();
+		}, this.config.windFieldUpdateInterval);
 	},
 
 	/* MagicMirror lifecycle: pause the particle loop when hidden. */
@@ -116,6 +124,13 @@ Module.register("MMM-WeatherMap", {
 			lat: this.config.lat,
 			lon: this.config.lon,
 			units: this.config.units
+		});
+	},
+
+	getWindField: function () {
+		this.sendSocketNotification("GET_WIND_FIELD", {
+			lat: this.config.lat,
+			lon: this.config.lon
 		});
 	},
 
@@ -228,6 +243,10 @@ Module.register("MMM-WeatherMap", {
 				this.styleError = (payload && payload.error) || "Style fetch failed.";
 			}
 			this.updateDom(this.config.animationSpeed);
+		} else if (notification === "WIND_FIELD_RESULT") {
+			if (payload && Array.isArray(payload.u) && Array.isArray(payload.v)) {
+				this.windField = payload;
+			}
 		} else if (notification === "WIND_SUMMARY_RESULT") {
 			if (payload && payload.hourly) {
 				this.wind = payload;

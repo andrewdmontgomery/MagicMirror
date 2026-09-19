@@ -133,3 +133,118 @@ describe("fetchWind", () => {
 		assert.equal(sent.length, 0);
 	});
 });
+
+describe("parseIdxRange", () => {
+	const IDX = [
+		"77:42508630:d=2026091903:UGRD:10 m above ground:anl:",
+		"78:44890245:d=2026091903:VGRD:10 m above ground:anl:",
+		"79:47033717:d=2026091903:WIND:10 m above ground:0-0 day max fcst:",
+		""
+	].join("\n");
+
+	it("locates analysis messages between neighbor offsets", () => {
+		assert.deepEqual(helper.parseIdxRange(IDX, "UGRD:10 m above ground"), {
+			start: 42508630,
+			end: 44890244
+		});
+		assert.deepEqual(helper.parseIdxRange(IDX, "VGRD:10 m above ground"), {
+			start: 44890245,
+			end: 47033716
+		});
+	});
+
+	it("throws when the parameter is absent", () => {
+		assert.throws(() => helper.parseIdxRange(IDX, "TMP:2 m above ground"), /missing from HRRR index/);
+	});
+});
+
+describe("extractRegion", () => {
+	it("downsamples a strided window with an integer origin", () => {
+		const u = Array.from({ length: 80 }, (_, i) => i);
+		const v = Array.from({ length: 80 }, (_, i) => -i);
+		const region = helper.extractRegion(u, v, 10, 8, 5, 4, 8, 2);
+		assert.equal(region.nx, 4);
+		assert.equal(region.ny, 4);
+		// Stride-2 window of 4 spans 7 rows, so the origin clamps to 1
+		// (rows 1..7), not the unclamped center-minus-half of 2.
+		assert.deepEqual({ originRow: region.originRow, originCol: region.originCol }, { originRow: 1, originCol: 1 });
+		assert.equal(region.u[0], 11);
+		assert.equal(region.v[0], -11);
+		assert.equal(region.u[15], u[(1 + 3 * 2) * 10 + (1 + 3 * 2)]);
+	});
+
+	it("clamps the window to the grid edges", () => {
+		const u = new Array(80).fill(1);
+		const v = new Array(80).fill(2);
+		const region = helper.extractRegion(u, v, 10, 8, 0, 0, 8, 2);
+		assert.deepEqual({ originRow: region.originRow, originCol: region.originCol }, { originRow: 0, originCol: 0 });
+	});
+});
+
+describe("latestCycle", () => {
+	it("takes the first index that exists", async () => {
+		const tried = [];
+		global.fetch = async (url) => {
+			tried.push(url);
+			return { ok: tried.length > 1, text: async () => "idx" };
+		};
+		const cycle = await helper.latestCycle(3);
+		assert.equal(tried.length, 2);
+		assert.match(tried[0], /hrrr\.t\d\dz\.wrfsfcf00\.grib2\.idx/);
+		assert.equal(cycle.indexText, "idx");
+	});
+});
+
+describe("fetchWindField", () => {
+	const fs = require("node:fs");
+
+	it("decodes both fixtures into a sane 40x40 region", async () => {
+		const ugrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "ugrd-sample.grb"));
+		const vgrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "vgrd-sample.grb"));
+		const realCycle = helper.latestCycle;
+		const realBytes = helper.fetchBytes;
+		const queued = [ugrd, vgrd];
+		// fetchBytes is stubbed (ranges ignored), but the index text
+		// must still parse — minimal real-format lines.
+		const indexText = [
+			"1:0:d=2026091903:UGRD:10 m above ground:anl:",
+			`2:${ugrd.length}:d=2026091903:VGRD:10 m above ground:anl:`,
+			`3:${ugrd.length + vgrd.length}:d=2026091903:WIND:10 m above ground:0-0 day max fcst:`,
+			""
+		].join("\n");
+		helper.latestCycle = async () => ({ date: "20260919", hour: "03", indexUrl: "stub", indexText });
+		helper.fetchBytes = async () => queued.shift();
+		try {
+			await helper.fetchWindField({ lat: 44.848, lon: -93.043 });
+		} finally {
+			helper.latestCycle = realCycle;
+			helper.fetchBytes = realBytes;
+		}
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0][0], "WIND_FIELD_RESULT");
+		const field = sent[0][1];
+		assert.equal(field.units, "m/s");
+		assert.equal(field.nx, 40);
+		assert.equal(field.ny, 40);
+		assert.equal(field.stride, 8);
+		assert.equal(field.u.length, 1600);
+		assert.equal(field.v.length, 1600);
+		assert.ok(Number.isInteger(field.originRow) && Number.isInteger(field.originCol));
+		let max = 0;
+		let total = 0;
+		for (let i = 0; i < field.u.length; i += 1) {
+			const speed = Math.hypot(field.u[i], field.v[i]);
+			if (speed > max) {
+				max = speed;
+			}
+			total += speed;
+		}
+		assert.ok(max < 50, `regional max ${max} m/s`);
+		assert.ok(total / field.u.length < 15, `regional mean ${total / field.u.length} m/s`);
+	});
+
+	it("sends nothing without coordinates and never throws", async () => {
+		await helper.fetchWindField({});
+		assert.equal(sent.length, 0);
+	});
+});
