@@ -1209,6 +1209,116 @@ describe("view crossfade", () => {
 	});
 });
 
+describe("wind recenter", () => {
+	it("requests home by default and marks fetching", () => {
+		const sent = [];
+		const c = ctx({
+			config: { lat: 44.848, lon: -93.043 },
+			fieldsFetching: false,
+			sendSocketNotification: (n, p) => sent.push([n, p])
+		});
+		def.getWindFields.call(c);
+		assert.deepEqual(sent, [["GET_WIND_FIELDS", { lat: 44.848, lon: -93.043 }]]);
+		assert.equal(c.fieldsFetching, true);
+	});
+
+	it("requests an explicit center", () => {
+		const sent = [];
+		const c = ctx({
+			config: { lat: 0, lon: 0 },
+			sendSocketNotification: (n, p) => sent.push([n, p])
+		});
+		def.getWindFields.call(c, 30, -80);
+		assert.deepEqual(sent, [["GET_WIND_FIELDS", { lat: 30, lon: -80 }]]);
+	});
+
+	it("covers points inside the current regional bbox", () => {
+		const regional = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1 };
+		const c = ctx({ windFields: [{ regional }] });
+		c.inGridBounds = (g, la, lo) => def.inGridBounds.call(c, g, la, lo);
+		assert.equal(def.fineWindowCovers.call(c, 2.5, 0.5), true);
+		assert.equal(def.fineWindowCovers.call(c, 25, -100), false);
+		assert.equal(def.fineWindowCovers.call(ctx({ windFields: [] }), 2.5, 0.5), false);
+	});
+
+	it("refetches on settle outside the window, debounced", () => {
+		const fired = [];
+		const cleared = [];
+		const realTimeout = global.setTimeout;
+		const realClear = global.clearTimeout;
+		global.setTimeout = (fn) => {
+			fired.push(fn);
+			return fired.length;
+		};
+		global.clearTimeout = (id) => cleared.push(id);
+		try {
+			const requested = [];
+			const regional = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1 };
+			const c = ctx({
+				map: { getCenter: () => ({ lat: 25, lng: -100 }) },
+				windFields: [{ regional }],
+				fieldsFetching: false,
+				recenterTimer: null
+			});
+			c.inGridBounds = (g, la, lo) => def.inGridBounds.call(c, g, la, lo);
+			c.getWindFields = (la, lo) => requested.push([la, lo]);
+			def.scheduleRecenter.call(c);
+			def.scheduleRecenter.call(c);
+			assert.deepEqual(cleared, [1]);
+			assert.equal(fired.length, 2);
+			fired[1]();
+			assert.deepEqual(requested, [[25, -100]]);
+		} finally {
+			global.setTimeout = realTimeout;
+			global.clearTimeout = realClear;
+		}
+	});
+
+	it("skips recenter while covered or fetching", () => {
+		const fired = [];
+		const realTimeout = global.setTimeout;
+		global.setTimeout = (fn) => {
+			fired.push(fn);
+			return 1;
+		};
+		try {
+			const regional = { nx: 2, ny: 2, lat0: 50, lon0: -110, dLat: 1, dLon: 1 };
+			const covered = ctx({
+				map: { getCenter: () => ({ lat: 49.5, lng: -109.5 }) },
+				windFields: [{ regional }],
+				fieldsFetching: false,
+				recenterTimer: null
+			});
+			covered.inGridBounds = (g, la, lo) => def.inGridBounds.call(covered, g, la, lo);
+			covered.getWindFields = () => {
+				throw new Error("must not fetch when covered");
+			};
+			def.scheduleRecenter.call(covered);
+			fired[0]();
+			const busy = ctx({
+				map: { getCenter: () => ({ lat: 25, lng: -100 }) },
+				windFields: [{ regional }],
+				fieldsFetching: true,
+				recenterTimer: null
+			});
+			busy.inGridBounds = (g, la, lo) => def.inGridBounds.call(busy, g, la, lo);
+			busy.getWindFields = () => {
+				throw new Error("must not fetch while busy");
+			};
+			def.scheduleRecenter.call(busy);
+			fired[1]();
+		} finally {
+			global.setTimeout = realTimeout;
+		}
+	});
+
+	it("clears fetching on error results", () => {
+		const c = ctx({ fieldsFetching: true });
+		def.socketNotificationReceived.call(c, "WIND_FIELDS_ERROR", {});
+		assert.equal(c.fieldsFetching, false);
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];

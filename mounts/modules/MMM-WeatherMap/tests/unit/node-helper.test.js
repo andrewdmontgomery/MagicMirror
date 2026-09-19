@@ -363,6 +363,20 @@ describe("fetchWindFields", () => {
 		assert.equal(sent[0][1].fields.length, 5);
 	});
 
+	it("reports total failure so the frontend clears fetching", async () => {
+		const realCycle = helper.latestCycle;
+		helper.latestCycle = async () => {
+			throw new Error("no cycle");
+		};
+		try {
+			await helper.fetchWindFields({ lat: 44.848, lon: -93.043 });
+		} finally {
+			helper.latestCycle = realCycle;
+		}
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0][0], "WIND_FIELDS_ERROR");
+	});
+
 	it("sends nothing without coordinates and never throws", async () => {
 		await helper.fetchWindFields({});
 		assert.equal(sent.length, 0);

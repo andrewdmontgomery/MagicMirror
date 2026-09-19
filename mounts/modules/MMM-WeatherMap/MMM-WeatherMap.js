@@ -96,6 +96,8 @@ Module.register("MMM-WeatherMap", {
 		this.wind = null;
 		this.windIndex = 0;
 		this.windFields = [];
+		this.fieldsFetching = false;
+		this.recenterTimer = null;
 		this.windCallout = null;
 		this.windBadge = null;
 		this.lastMarkerStatus = null;
@@ -154,11 +156,43 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
-	getWindFields: function () {
-		this.sendSocketNotification("GET_WIND_FIELDS", {
-			lat: this.config.lat,
-			lon: this.config.lon
-		});
+	/* Request hourly fields centered on the given point (the map
+	 * center on moves, config home otherwise). In-flight guarded so
+	 * rapid pans can't stack fetches. */
+	getWindFields: function (lat, lon) {
+		if (lat === undefined) {
+			lat = this.config.lat;
+			lon = this.config.lon;
+		}
+		this.fieldsFetching = true;
+		this.sendSocketNotification("GET_WIND_FIELDS", { lat, lon });
+	},
+
+	/* Fine regional window covers a point (edges inclusive)? */
+	fineWindowCovers: function (lat, lon) {
+		if (!Array.isArray(this.windFields) || this.windFields.length === 0) {
+			return false;
+		}
+		return this.inGridBounds(this.windFields[0].regional, lat, lon);
+	},
+
+	/* Recenter the fine window when the map settles outside it:
+	 * debounced, skipped while a fetch is in flight. Coarse flow
+	 * covers the pan immediately; fine detail pops in after. */
+	scheduleRecenter: function () {
+		if (this.recenterTimer) {
+			clearTimeout(this.recenterTimer);
+		}
+		this.recenterTimer = setTimeout(() => {
+			this.recenterTimer = null;
+			if (!this.map || this.fieldsFetching) {
+				return;
+			}
+			const center = this.map.getCenter();
+			if (!this.fineWindowCovers(center.lat, center.lng)) {
+				this.getWindFields(center.lat, center.lng);
+			}
+		}, 1500);
 	},
 
 	/* External view control (manual toggle today, auto-selector later):
@@ -450,6 +484,7 @@ Module.register("MMM-WeatherMap", {
 			}
 			this.updateDom(this.config.animationSpeed);
 		} else if (notification === "WIND_FIELDS_RESULT") {
+			this.fieldsFetching = false;
 			if (payload && Array.isArray(payload.fields) && payload.fields.length > 0) {
 				this.windFields = payload.fields;
 				this.windIndex = this.defaultWindIndex();
@@ -458,6 +493,8 @@ Module.register("MMM-WeatherMap", {
 				// fade would flash the whole view every data refresh.
 				this.syncContentToView();
 			}
+		} else if (notification === "WIND_FIELDS_ERROR") {
+			this.fieldsFetching = false;
 		} else if (notification === "WIND_SUMMARY_RESULT") {
 			if (payload && payload.hourly) {
 				this.wind = payload;
@@ -669,6 +706,7 @@ Module.register("MMM-WeatherMap", {
 			// callout node itself comes and goes per view).
 			this.map.on("move", () => this.positionWindCallout());
 			this.map.on("resize", () => this.positionWindCallout());
+			this.map.on("moveend", () => this.scheduleRecenter());
 			if (!this.isWindView()) {
 				this.addRadarLayer();
 			}

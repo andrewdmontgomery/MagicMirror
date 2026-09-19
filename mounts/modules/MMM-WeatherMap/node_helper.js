@@ -372,6 +372,7 @@ module.exports = NodeHelper.create({
 			this.sendSocketNotification("WIND_FIELDS_RESULT", { fields });
 		} catch (error) {
 			console.error("MMM-WeatherMap: failed to fetch wind fields", error.message || error);
+			this.sendSocketNotification("WIND_FIELDS_ERROR", {});
 		}
 	},
 
