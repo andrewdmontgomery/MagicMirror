@@ -96,7 +96,6 @@ Module.register("MMM-WeatherMap", {
 		this.positionIndex = 0;
 		this.loopCount = 0;
 		this.frameTimer = null;
-		this.playing = true;
 		this.framesKey = null;
 		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
 		this.wind = null;
@@ -116,10 +115,6 @@ Module.register("MMM-WeatherMap", {
 		this.mapReady = false;
 		this.ghosts = [];
 		this.particles = [];
-		this.particleGL = null;
-		this.particleFade = 0;
-		this.particleFadeTarget = 0;
-		this.getStyle();
 		this.getFrames();
 		this.getWind();
 		this.getWindFields();
@@ -212,6 +207,12 @@ Module.register("MMM-WeatherMap", {
 
 	isWindView: function () {
 		return this.view === "wind";
+	},
+
+	/* Play state for the active view (each map type remembers its
+	 * own). Pure — tested. */
+	isPlaying: function () {
+		return !!(this.playing && this.playing[this.view]);
 	},
 
 	setView: function (view) {
@@ -1054,7 +1055,7 @@ Module.register("MMM-WeatherMap", {
 		this.addRadarLayer();
 		this.addMarkers();
 		this.showFrame(this.frameIndex, { paint: false });
-		if (!this.playing) {
+		if (!this.isPlaying()) {
 			return;
 		}
 		this.frameTimer = setInterval(() => {
@@ -1098,7 +1099,7 @@ Module.register("MMM-WeatherMap", {
 		}
 		this.windIndex = Math.min(this.windIndex, slots.length - 1);
 		this.showWindFrame(this.windIndex);
-		if (!this.playing) {
+		if (!this.isPlaying()) {
 			return;
 		}
 		this.frameTimer = setInterval(() => {
@@ -1169,9 +1170,9 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	togglePlay: function () {
-		this.playing = !this.playing;
+		this.playing[this.view] = !this.isPlaying();
 		this.updatePlayButton();
-		if (this.playing) {
+		if (this.isPlaying()) {
 			this.restartAnimation();
 		} else {
 			if (this.frameTimer) {
@@ -1192,7 +1193,7 @@ Module.register("MMM-WeatherMap", {
 				return;
 			}
 			const index = Math.min(slots.length - 1, Math.max(0, Math.round(ratio * (slots.length - 1))));
-			if (this.playing) {
+			if (this.isPlaying()) {
 				this.togglePlay();
 			}
 			this.showWindFrame(index);
@@ -1205,7 +1206,7 @@ Module.register("MMM-WeatherMap", {
 			this.frames.frames.length - 1,
 			Math.max(0, Math.round(ratio * (this.frames.frames.length - 1)))
 		);
-		if (this.playing) {
+		if (this.isPlaying()) {
 			this.togglePlay();
 		}
 		const prev = this.frameIndex;
@@ -1328,7 +1329,7 @@ Module.register("MMM-WeatherMap", {
 
 	updatePlayButton: function () {
 		if (this.playButton) {
-			this.playButton.textContent = this.playing ? "❚❚" : "▶";
+			this.playButton.textContent = this.isPlaying() ? "❚❚" : "▶";
 		}
 	},
 

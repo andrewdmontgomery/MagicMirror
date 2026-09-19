@@ -32,7 +32,7 @@ function ctx(overrides = {}) {
 		config: { radarOpacity: 0.45, animationSpeedMs: 800 },
 		frames: null,
 		frameIndex: 0,
-		playing: true,
+		playing: { precip: true, wind: true },
 		map: null,
 		timelineLabel: undefined,
 		timelineTicks: undefined,
@@ -64,7 +64,7 @@ describe("formatFrameTime", () => {
 
 describe("scrubTo", () => {
 	it("clamps out-of-range ratios to first/last frame", () => {
-		const c = ctx({ frames: framesFixture(), playing: false });
+		const c = ctx({ frames: framesFixture(), playing: { precip: false, wind: true } });
 		def.scrubTo.call(c, -1);
 		assert.equal(c.frameIndex, 0);
 		def.scrubTo.call(c, 2);
@@ -72,17 +72,33 @@ describe("scrubTo", () => {
 	});
 
 	it("maps mid ratios to the nearest frame", () => {
-		const c = ctx({ frames: framesFixture(), playing: false });
+		const c = ctx({ frames: framesFixture(), playing: { precip: false, wind: true } });
 		def.scrubTo.call(c, 0.5);
 		assert.equal(c.frameIndex, 6);
 	});
 
 	it("pauses a playing animation when scrubbing", () => {
-		const c = ctx({ frames: framesFixture(), playing: true });
+		const c = ctx({ frames: framesFixture(), playing: { precip: true, wind: true }, view: "precip" });
 		def.scrubTo.call(c, 0.25);
-		assert.equal(c.playing, false);
+		assert.deepEqual(c.playing, { precip: false, wind: true });
 		assert.equal(c.frameIndex, 3);
 		assert.equal(c.frameTimer, undefined);
+	});
+
+	it("keeps play state per view", () => {
+		const c = ctx({ view: "precip", playing: { precip: false, wind: true } });
+		assert.equal(def.isPlaying.call(c), false);
+		c.view = "wind";
+		assert.equal(def.isPlaying.call(c), true);
+		def.togglePlay.call(c);
+		assert.deepEqual(c.playing, { precip: false, wind: false });
+		c.view = "precip";
+		def.togglePlay.call(c);
+		assert.deepEqual(c.playing, { precip: true, wind: false });
+		// togglePlay restarts the glide ticker: release it so the
+		// runner exits (production clears it on pause/restart).
+		clearInterval(c.progressTimer);
+		clearInterval(c.frameTimer);
 	});
 });
 
@@ -418,7 +434,7 @@ describe("wind scrub and badge", () => {
 			},
 			wind: { hourly: { time, speed, direction } },
 			windIndex: 0,
-			playing: false,
+			playing: { precip: true, wind: false },
 			windBadge: undefined,
 			...overrides
 		});
