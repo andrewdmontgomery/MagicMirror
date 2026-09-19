@@ -841,6 +841,52 @@ describe("wind slots", () => {
 		assert.equal(def.glideProgress.call(ctx(), 0, 1, 0, 800), 100);
 	});
 
+	it("dates the line by the displayed hour, across midnight", () => {
+		const late = Math.floor(new Date(2026, 5, 1, 23, 0).getTime() / 1000);
+		const early = Math.floor(new Date(2026, 5, 2, 1, 0).getTime() / 1000);
+		const writes = [];
+		const c = ctx({
+			timelineLabel: { set textContent(v) { writes.push(v); } },
+			timelineTicks: { hasChildNodes: () => true },
+			timelineTrack: { children: [] },
+			windIndex: 0,
+			view: "wind",
+			config: { animationSpeedMs: 800 }
+		});
+		c.windSlots = () => [
+			{ time: late, isNow: false, fieldIndex: 0 },
+			{ time: early, isNow: true, fieldIndex: 1 }
+		];
+		c.formatDateLabel = (t) => def.formatDateLabel.call(c, t);
+		def.updateWindTimeline.call(c);
+		assert.match(writes[0], /June 1/);
+		c.windIndex = 1;
+		def.updateWindTimeline.call(c);
+		assert.match(writes[1], /June 2/);
+	});
+
+	it("formats full dates for the timeline", () => {
+		const noon = Math.floor(new Date(2026, 5, 1, 12, 0).getTime() / 1000);
+		assert.equal(def.formatDateLabel.call(ctx(), noon), "Monday, June 1, 2026");
+	});
+
+	it("snaps loop wraps instead of gliding back", () => {
+		const c = ctx({ timelineProgress: { style: {}, offsetWidth: 0 } });
+		c.timelineProgress.style.width = "100%";
+		def.setProgressWidth.call(c, 0);
+		assert.equal(c.timelineProgress.style.width, "0%");
+		assert.equal(c.timelineProgress.style.transition, "");
+	});
+
+	it("glides small moves including manual scrubs", () => {
+		const c = ctx({ timelineProgress: { style: {}, offsetWidth: 0 } });
+		c.timelineProgress.style.width = "80%";
+		def.setProgressWidth.call(c, 30);
+		assert.equal(c.timelineProgress.style.width, "30%");
+		assert.ok(c.timelineProgress.style.transition !== "none");
+		def.setProgressWidth.call(ctx({ timelineProgress: null }), 50);
+	});
+
 	it("paints precip progress from the frame index", () => {
 		const frames = [{ time: 1 }, { time: 2 }, { time: 3 }, { time: 4 }, { time: 5 }];
 		const c = ctx({

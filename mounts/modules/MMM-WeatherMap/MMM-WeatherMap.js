@@ -989,13 +989,6 @@ Module.register("MMM-WeatherMap", {
 
 		this.timelineLabel = document.createElement("div");
 		this.timelineLabel.className = "vector-tl-date light";
-		const now = new Date(Date.now());
-		this.timelineLabel.textContent = now.toLocaleDateString("en-US", {
-			weekday: "long",
-			month: "long",
-			day: "numeric",
-			year: "numeric"
-		});
 		main.appendChild(this.timelineLabel);
 
 		this.timelineTrack = document.createElement("div");
@@ -1197,8 +1190,9 @@ Module.register("MMM-WeatherMap", {
 		this.paintProgress();
 	},
 
-	/* Wind track progress; the date line above stays a plain date
-	 * (the track's own hour labels say which hour is selected). */
+	/* Wind track progress; the date line above always reads the date
+	 * of the DISPLAYED hour — playing or scrubbing across midnight
+	 * moves the date with the data. Pure date formatting — tested. */
 	updateWindTimeline: function () {
 		if (!this.timelineTrack || !this.timelineTicks) {
 			return;
@@ -1206,7 +1200,21 @@ Module.register("MMM-WeatherMap", {
 		if (!this.timelineTicks.hasChildNodes()) {
 			this.buildTimelineTicks();
 		}
+		const slots = this.windSlots();
+		const slot = slots[Math.min(this.windIndex, slots.length - 1)];
+		if (slot && this.timelineLabel) {
+			this.timelineLabel.textContent = this.formatDateLabel(slot.time);
+		}
 		this.paintProgress();
+	},
+
+	formatDateLabel: function (unixSeconds) {
+		return new Date(unixSeconds * 1000).toLocaleDateString("en-US", {
+			weekday: "long",
+			month: "long",
+			day: "numeric",
+			year: "numeric"
+		});
 	},
 
 	/* Frame position with wall-clock glide: the integer frame plus the
@@ -1226,9 +1234,29 @@ Module.register("MMM-WeatherMap", {
 		const elapsed = Date.now() - (this.stepStart || Date.now());
 		if (this.isWindView()) {
 			const slots = this.windSlots();
-			this.timelineProgress.style.width = `${this.glideProgress(this.windIndex, slots.length, elapsed, this.config.animationSpeedMs)}%`;
+			this.setProgressWidth(this.glideProgress(this.windIndex, slots.length, elapsed, this.config.animationSpeedMs));
 		} else if (this.frames) {
-			this.timelineProgress.style.width = `${this.glideProgress(this.frameIndex, this.frames.frames.length, elapsed, this.config.animationSpeedMs)}%`;
+			this.setProgressWidth(this.glideProgress(this.frameIndex, this.frames.frames.length, elapsed, this.config.animationSpeedMs));
+		}
+	},
+
+	/* Width setter with loop-wrap snap: a large BACKWARD jump means
+	 * the animation looped, so the fill jumps instead of gliding
+	 * back left through the transition (small backward moves, like
+	 * manual scrubs, still glide). */
+	setProgressWidth: function (percent) {
+		if (!this.timelineProgress) {
+			return;
+		}
+		const bar = this.timelineProgress;
+		const current = parseFloat(bar.style.width) || 0;
+		if (percent < current - 50) {
+			bar.style.transition = "none";
+			bar.style.width = `${percent}%`;
+			void bar.offsetWidth;
+			bar.style.transition = "";
+		} else {
+			bar.style.width = `${percent}%`;
 		}
 	},
 
