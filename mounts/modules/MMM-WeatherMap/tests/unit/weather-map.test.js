@@ -118,14 +118,16 @@ describe("showFrame", () => {
 
 	it("reports why marker setup no-ops", () => {
 		assert.equal(def.addMarkers.call(ctx({ map: null })), "no-map");
-		assert.equal(def.addMarkers.call(ctx({ map: { loaded: () => false } })), "not-loaded");
+		assert.equal(def.addMarkers.call(ctx({ map: {}, mapReady: false })), "not-ready");
 		const present = ctx({
-			map: { loaded: () => true, getSource: () => ({}), getLayer: () => ({}) },
+			map: { getSource: () => ({}), getLayer: () => ({}) },
+			mapReady: true,
 			config: { markers: [] }
 		});
 		assert.equal(def.addMarkers.call(present), "already-present");
 		const orphaned = ctx({
-			map: { loaded: () => true, getSource: () => ({}), getLayer: () => undefined },
+			map: { getSource: () => ({}), getLayer: () => undefined },
+			mapReady: true,
 			config: { markers: [] }
 		});
 		assert.equal(def.addMarkers.call(orphaned), "source-without-layer");

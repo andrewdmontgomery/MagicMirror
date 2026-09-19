@@ -99,6 +99,10 @@ Module.register("MMM-WeatherMap", {
 		this.windCallout = null;
 		this.windBadge = null;
 		this.lastMarkerStatus = null;
+		// Style readiness (set on map load): layer setup gates on
+		// THIS, never on map.loaded() — loaded() stays false under
+		// continuous tile churn and would orphan layers forever.
+		this.mapReady = false;
 		this.ghosts = [];
 		this.particles = [];
 		this.particleRaf = null;
@@ -488,6 +492,7 @@ Module.register("MMM-WeatherMap", {
 		// them before this runs (via setTimeout), and the load handler
 		// below needs the live reference to position the callout.
 		// They are rebuilt/nulled in getDom itself on every updateDom.
+		this.mapReady = false;
 		if (this.map) {
 			this.map.remove();
 			this.map = null;
@@ -525,6 +530,7 @@ Module.register("MMM-WeatherMap", {
 			if (this.map !== freshMap) {
 				return;
 			}
+			this.mapReady = true;
 			if (!this.isWindView()) {
 				this.addRadarLayer();
 			}
@@ -756,8 +762,8 @@ Module.register("MMM-WeatherMap", {
 		if (!this.map) {
 			return "no-map";
 		}
-		if (!this.map.loaded()) {
-			return "not-loaded";
+		if (!this.mapReady) {
+			return "not-ready";
 		}
 		if (this.map.getSource("markers")) {
 			return this.map.getLayer("markers") ? "already-present" : "source-without-layer";
@@ -803,7 +809,7 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	addRadarLayer: function () {
-		if (!this.map || !this.map.loaded() || !this.frames || this.map.getSource("rainviewer-0")) {
+		if (!this.map || !this.mapReady || !this.frames || this.map.getSource("rainviewer-0")) {
 			return;
 		}
 		// One raster layer per frame; the tick crossfades opacity instead
@@ -854,9 +860,9 @@ Module.register("MMM-WeatherMap", {
 			return;
 		}
 		this.frameTimer = setInterval(() => {
-			// Re-attempt layer creation every tick: a single transient
-			// map.loaded()===false at startup orphaned the layer forever.
-			// addRadarLayer is idempotent via its getSource guard.
+			// Re-attempt layer creation every tick: layer setup gates
+			// on style readiness, and addRadarLayer is idempotent via
+			// its getSource guard.
 			this.addRadarLayer();
 			const prev = this.frameIndex;
 			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
