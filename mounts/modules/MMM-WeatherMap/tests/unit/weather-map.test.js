@@ -494,7 +494,8 @@ function particleCtx(map, particles) {
 		windSlots: () => [{ time: 0, fieldIndex: -1, isNow: true, speed: 75, direction: 0 }],
 		spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
 		ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
-			strokeTrail: function (...args) { return def.strokeTrail.call(this, ...args); }
+			strokeTrail: function (...args) { return def.strokeTrail.call(this, ...args); },
+			punchMarkerHole: function (c2d) { return def.punchMarkerHole.call(this, c2d); },
 	};
 }
 
