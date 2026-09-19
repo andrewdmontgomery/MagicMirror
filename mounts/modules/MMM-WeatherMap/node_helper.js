@@ -83,7 +83,10 @@ module.exports = NodeHelper.create({
 				await this.cycleIndex(date, hour, 0);
 				return { date, hour };
 			} catch (error) {
-				console.error("MMM-WeatherMap: HRRR index probe failed", error.message || error);
+				// Warn, not error: the newest cycle 404ing is the
+				// normal path (model lag), not a failure. Exhausting
+				// the window still throws below.
+				console.warn("MMM-WeatherMap: HRRR run not yet posted", `${date}t${hour}z`);
 			}
 		}
 		throw new Error("MMM-WeatherMap: no HRRR cycle found in probe window");
