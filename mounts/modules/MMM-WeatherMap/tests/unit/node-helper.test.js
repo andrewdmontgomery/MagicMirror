@@ -226,10 +226,12 @@ describe("fetchWindField", () => {
 		assert.equal(field.units, "m/s");
 		assert.equal(field.nx, 40);
 		assert.equal(field.ny, 40);
-		assert.equal(field.stride, 8);
 		assert.equal(field.u.length, 1600);
 		assert.equal(field.v.length, 1600);
-		assert.ok(Number.isInteger(field.originRow) && Number.isInteger(field.originCol));
+		// Uniform lat/lon grid, row 0 north: home sits inside it.
+		assert.ok(field.dLat > 0 && field.dLon > 0);
+		assert.ok(field.lat0 > 44.848 && field.lat0 < 60, `lat0 ${field.lat0}`);
+		assert.ok(field.lon0 < -93.043 && field.lon0 > -140, `lon0 ${field.lon0}`);
 		let max = 0;
 		let total = 0;
 		for (let i = 0; i < field.u.length; i += 1) {
@@ -241,6 +243,12 @@ describe("fetchWindField", () => {
 		}
 		assert.ok(max < 50, `regional max ${max} m/s`);
 		assert.ok(total / field.u.length < 15, `regional mean ${total / field.u.length} m/s`);
+		// Nearest node to home matches the direct full-grid sample
+		// (0.64 m/s from the Task-3 validation) within a generous band.
+		const homeR = Math.round((field.lat0 - 44.848) / field.dLat);
+		const homeC = Math.round((-93.043 - field.lon0) / field.dLon);
+		const homeSpeed = Math.hypot(field.u[homeR * 40 + homeC], field.v[homeR * 40 + homeC]);
+		assert.ok(Math.abs(homeSpeed - 0.64) < 1.0, `home node ${homeSpeed} m/s`);
 	});
 
 	it("sends nothing without coordinates and never throws", async () => {

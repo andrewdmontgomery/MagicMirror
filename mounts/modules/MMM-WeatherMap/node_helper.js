@@ -91,6 +91,31 @@ module.exports = NodeHelper.create({
 		return { nx: across, ny: across, originRow, originCol, stride, u: outU, v: outV };
 	},
 
+	/* Resample the Lambert window onto a uniform lat/lon grid the
+	 * browser can bilinear-sample with plain array math (no
+	 * projection code ships to the frontend). Row 0 is the north
+	 * edge: lat decreases as rows increase. Pure given decoded
+	 * arrays — covered by the fetchWindField integration test. */
+	resampleToLatLon: function (message, u, v, nx, ny, originRow, originCol, stride = WIND_FIELD_STRIDE, across = 40) {
+		const cells = (across - 1) * stride;
+		const northwest = grib2.gridToLatLon(message, originRow, originCol);
+		const southeast = grib2.gridToLatLon(message, originRow + cells, originCol + cells);
+		const lat0 = northwest.lat;
+		const dLat = (northwest.lat - southeast.lat) / (across - 1);
+		const lon0 = northwest.lon;
+		const dLon = (southeast.lon - northwest.lon) / (across - 1);
+		const outU = new Array(across * across);
+		const outV = new Array(across * across);
+		for (let r = 0; r < across; r += 1) {
+			for (let c = 0; c < across; c += 1) {
+				const at = grib2.latLonToGrid(message, lat0 - r * dLat, lon0 + c * dLon);
+				outU[r * across + c] = grib2.bilinearSample(u, nx, ny, at.row, at.col);
+				outV[r * across + c] = grib2.bilinearSample(v, nx, ny, at.row, at.col);
+			}
+		}
+		return { nx: across, ny: across, lat0, lon0, dLat, dLon, u: outU, v: outV };
+	},
+
 	decodeComponent: function (bytes, wantCategory, wantParameter, label) {
 		const message = grib2.readMessage(bytes);
 		const info = grib2.productInfo(message);
@@ -195,7 +220,7 @@ module.exports = NodeHelper.create({
 			const v = this.decodeComponent(vBytes, 2, 3, "VGRD");
 			const dims = grib2.gridDimensions(u.message);
 			const center = grib2.latLonToGrid(u.message, lat, lon);
-			const region = this.extractRegion(
+			const window = this.extractRegion(
 				u.values,
 				v.values,
 				dims.nx,
@@ -203,25 +228,35 @@ module.exports = NodeHelper.create({
 				Math.round(center.row),
 				Math.round(center.col)
 			);
+			const field = this.resampleToLatLon(
+				u.message,
+				u.values,
+				v.values,
+				dims.nx,
+				dims.ny,
+				window.originRow,
+				window.originCol
+			);
 			const homeU = u.values[Math.round(center.row) * dims.nx + Math.round(center.col)];
 			const homeV = v.values[Math.round(center.row) * dims.nx + Math.round(center.col)];
 			const homeSpeed = Math.hypot(homeU, homeV);
 			const homeDir = (Math.atan2(-homeU, -homeV) * 180) / Math.PI;
 			console.log(
 				`MMM-WeatherMap: wind field hrrr.t${cycle.hour}z ` +
-				`region ${region.nx}x${region.ny} stride ${region.stride}, ` +
+				`latlon ${field.nx}x${field.ny} from ${field.lat0.toFixed(2)},${field.lon0.toFixed(2)}, ` +
 				`home ${homeSpeed.toFixed(1)} m/s from ${Math.round((homeDir + 360) % 360)}°`
 			);
 			this.sendSocketNotification("WIND_FIELD_RESULT", {
 				time: `${cycle.date}T${cycle.hour}:00:00Z`,
 				units: "m/s",
-				nx: region.nx,
-				ny: region.ny,
-				originRow: region.originRow,
-				originCol: region.originCol,
-				stride: region.stride,
-				u: Array.from(region.u),
-				v: Array.from(region.v)
+				nx: field.nx,
+				ny: field.ny,
+				lat0: field.lat0,
+				lon0: field.lon0,
+				dLat: field.dLat,
+				dLon: field.dLon,
+				u: Array.from(field.u),
+				v: Array.from(field.v)
 			});
 		} catch (error) {
 			console.error("MMM-WeatherMap: failed to fetch wind field", error.message || error);

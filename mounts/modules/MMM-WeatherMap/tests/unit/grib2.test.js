@@ -20,7 +20,7 @@ const assert = require("node:assert/strict");
 const path = require("node:path");
 const fs = require("node:fs");
 
-const { readMessage, gridDimensions, productInfo, simplePacking, unpackSimple } = require("../../grib2.js");
+const { readMessage, gridDimensions, productInfo, simplePacking, unpackSimple, bilinearSample } = require("../../grib2.js");
 
 const FIXTURE = path.resolve(__dirname, "..", "fixtures", "ugrd-sample.grb");
 
@@ -100,5 +100,22 @@ describe("unpackSimple", () => {
 		assert.ok(Math.abs(min + 15.068912506103516) < 1e-6, `min ${min}`);
 		assert.ok(Math.abs(max - 17.556087493896484) < 1e-6, `max ${max}`);
 		assert.ok(Math.abs(total / values.length + 0.6267577981317697) < 1e-6, `mean ${total / values.length}`);
+	});
+});
+
+describe("bilinearSample", () => {
+	// 3x3 grid: value = row * 10 + col.
+	const grid = [0, 1, 2, 10, 11, 12, 20, 21, 22];
+
+	it("returns nodes exactly and blends interiors", () => {
+		assert.equal(bilinearSample(grid, 3, 3, 0, 0), 0);
+		assert.equal(bilinearSample(grid, 3, 3, 2, 2), 22);
+		assert.equal(bilinearSample(grid, 3, 3, 0.5, 0.5), 5.5);
+		assert.equal(bilinearSample(grid, 3, 3, 1, 1.5), 11.5);
+	});
+
+	it("clamps outside positions to the edge", () => {
+		assert.equal(bilinearSample(grid, 3, 3, -5, 1), 1);
+		assert.equal(bilinearSample(grid, 3, 3, 1, 99), 12);
 	});
 });

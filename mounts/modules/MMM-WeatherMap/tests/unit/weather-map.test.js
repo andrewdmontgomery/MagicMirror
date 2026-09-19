@@ -396,66 +396,66 @@ describe("wind scrub and badge", () => {
 	});
 });
 
-describe("history-trail particles", () => {
-	function trailStub() {
-		const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [] };
-		const ctx2d = {
-			clearRect: (x, y, w, h) => calls.cleared.push([x, y, w, h]),
-			createLinearGradient: (x0, y0, x1, y1) => {
-				calls.gradients.push([x0, y0, x1, y1]);
-				return { addColorStop: (offset, color) => calls.stops.push([offset, color]) };
-			},
-			beginPath: () => {},
-			moveTo: (x, y) => calls.moveTo.push([x, y]),
-			lineTo: (x, y) => calls.lineTo.push([x, y]),
-			stroke: () => {}
-		};
-		// Identity-ish projection in stub space: screen = geo * 10
-		// plus a mutable pan offset, so tests simulate drags by
-		// mutating map.pan.
-		const map = {
-			pan: { x: 0, y: 0 },
-			project: function (p) {
-				const [lon, lat] = Array.isArray(p) ? p : [p.lng, p.lat];
-				return { x: lon * 10 + this.pan.x, y: lat * 10 + this.pan.y };
-			},
-			unproject: function ([x, y]) {
-				calls.unprojected.push([x, y]);
-				return { lng: (x - this.pan.x) / 10, lat: (y - this.pan.y) / 10 };
-			}
-		};
-		return { calls, ctx2d, map };
-	}
-
-	function particleCtx(map, particles) {
-		return {
-			map,
-			particles,
-			ghosts: [],
-			config: { units: "imperial" },
-			currentWindSlot: () => ({ direction: 0, speed: 75 }),
-			windLegendScale: def.windLegendScale,
-			windDriftVector: def.windDriftVector,
-			spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
-			ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
-			strokeTrail: function (c2d, p, a) { return def.strokeTrail.call(this, c2d, p, a); }
-		};
-	}
-
-	function withoutRespawn(fn) {
-		// 0.5: no random-respawns, long lifespans, and mid-canvas
-		// spawns — a high value like 0.99 births particles at 396px
-		// where max-speed downward drift exits the 400px stub canvas
-		// every other frame.
-		const realRandom = Math.random;
-		Math.random = () => 0.5;
-		try {
-			fn();
-		} finally {
-			Math.random = realRandom;
+// Shared particle-test doubles: identity-ish projection in stub
+// space (screen = geo * 10) plus a mutable pan offset, so tests
+// simulate drags by mutating map.pan.
+function trailStub() {
+	const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [] };
+	const ctx2d = {
+		clearRect: (x, y, w, h) => calls.cleared.push([x, y, w, h]),
+		createLinearGradient: (x0, y0, x1, y1) => {
+			calls.gradients.push([x0, y0, x1, y1]);
+			return { addColorStop: (offset, color) => calls.stops.push([offset, color]) };
+		},
+		beginPath: () => {},
+		moveTo: (x, y) => calls.moveTo.push([x, y]),
+		lineTo: (x, y) => calls.lineTo.push([x, y]),
+		stroke: () => {}
+	};
+	const map = {
+		pan: { x: 0, y: 0 },
+		project: function (p) {
+			const [lon, lat] = Array.isArray(p) ? p : [p.lng, p.lat];
+			return { x: lon * 10 + this.pan.x, y: lat * 10 + this.pan.y };
+		},
+		unproject: function ([x, y]) {
+			calls.unprojected.push([x, y]);
+			return { lng: (x - this.pan.x) / 10, lat: (y - this.pan.y) / 10 };
 		}
-	}
+	};
+	return { calls, ctx2d, map };
+}
 
+function particleCtx(map, particles) {
+	return {
+		map,
+		particles,
+		ghosts: [],
+		config: { units: "imperial" },
+		currentWindSlot: () => ({ direction: 0, speed: 75 }),
+		windLegendScale: def.windLegendScale,
+		windDriftVector: def.windDriftVector,
+		spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
+		ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
+		strokeTrail: function (c2d, p, a) { return def.strokeTrail.call(this, c2d, p, a); }
+	};
+}
+
+function withoutRespawn(fn) {
+	// 0.5: no random-respawns, long lifespans, and mid-canvas
+	// spawns — a high value like 0.99 births particles at 396px
+	// where max-speed downward drift exits the 400px stub canvas
+	// every other frame.
+	const realRandom = Math.random;
+	Math.random = () => 0.5;
+	try {
+		fn();
+	} finally {
+		Math.random = realRandom;
+	}
+}
+
+describe("history-trail particles", () => {
 	it("advects geographically and grows the trail", () => {
 		const { ctx2d, map } = trailStub();
 		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
@@ -612,6 +612,66 @@ describe("history-trail particles", () => {
 		def.strokeTrail.call(c, ctx2d, { trail: [{ lon: 1, lat: 2 }] });
 		assert.equal(calls.gradients.length, 0);
 		assert.equal(calls.moveTo.length, 0);
+	});
+});
+
+describe("field sampling", () => {
+	function testField() {
+		return {
+			nx: 2,
+			ny: 2,
+			lat0: 3,
+			lon0: 0,
+			dLat: 1,
+			dLon: 1,
+			u: [0, 10, 20, 30],
+			v: [0, 0, 0, 0]
+		};
+	}
+
+	it("samples nodes exactly and blends interiors", () => {
+		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 3, 0), { u: 0, v: 0 });
+		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 2, 1), { u: 30, v: 0 });
+		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 2.5, 0.5), { u: 15, v: 0 });
+	});
+
+	it("clamps outside positions to the boundary", () => {
+		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 99, 0), { u: 0, v: 0 });
+		assert.deepEqual(def.sampleWindField.call(ctx(), testField(), 2, 99), { u: 30, v: 0 });
+	});
+
+	it("returns null without a usable field", () => {
+		assert.equal(def.sampleWindField.call(ctx(), null, 0, 0), null);
+		assert.equal(def.sampleWindField.call(ctx(), {}, 0, 0), null);
+	});
+
+	it("converts an eastward flow to eastward drift", () => {
+		const field = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const c = ctx({});
+		c.sampleWindField = (f, la, lo) => def.sampleWindField.call(c, f, la, lo);
+		c.windLegendScale = (u) => def.windLegendScale.call(c, u);
+		c.windDriftVector = (d, s, m) => def.windDriftVector.call(c, d, s, m);
+		const drift = def.fieldDrift.call(c, field, 0.5, 2.5, "imperial");
+		// Eastward flow is direction -90 (from the west), not +90.
+		const expected = def.windDriftVector.call(c, -90, 10 * 2.23694, 75);
+		assert.ok(drift.dx > 0, `dx ${drift.dx}`);
+		assert.ok(Math.abs(drift.dy) < 1e-9, `dy ${drift.dy}`);
+		assert.ok(Math.abs(drift.dx - expected.dx) < 1e-9);
+	});
+
+	it("advects particles along the field, not the fallback", () => {
+		const { ctx2d, map } = trailStub();
+		const field = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
+		const c = particleCtx(map, particles);
+		c.windField = field;
+		c.sampleWindField = (f, la, lo) => def.sampleWindField.call(c, f, la, lo);
+		c.fieldDrift = (f, lo, la, u) => def.fieldDrift.call(c, f, lo, la, u);
+		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
+		// 10 m/s eastward = 22.37 mph: 0.2 + (22.37/75) * 1.4 px/frame.
+		const step = (0.2 + ((10 * 2.23694) / 75) * 1.4) / 10;
+		assert.ok(Math.abs(particles[0].lon - (1 + step)) < 1e-9, `lon ${particles[0].lon}`);
+		assert.ok(Math.abs(particles[0].lat - 2) < 1e-9, `lat ${particles[0].lat}`);
 	});
 });
 

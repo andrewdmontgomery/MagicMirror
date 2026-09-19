@@ -19,6 +19,9 @@ const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
+/* Field components arrive in m/s; the drift scale runs in legend units. */
+const MS_TO_MPH = 2.23694;
+const MS_TO_KMH = 3.6;
 /* Trail length in history points per particle. Trails are redrawn from
  * stored positions every frame (not faded bitmaps), so this alone
  * controls tail length. Long enough to read as streaks even at a
@@ -1172,7 +1175,10 @@ Module.register("MMM-WeatherMap", {
 	advectParticles: function (ctx2d, width, height, advance = true) {
 		const slot = this.currentWindSlot();
 		const scale = this.windLegendScale(this.config.units);
-		const drift = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
+		// Uniform slot vector until the gridded field arrives; then
+		// each particle samples its own position (Task 5 will retire
+		// the uniform path for the badge/timeline too).
+		const fallback = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
 		// Full clear, never a translucent fade: the map underneath
 		// returns to its exact base color every frame. No residue.
 		ctx2d.clearRect(0, 0, width, height);
@@ -1184,6 +1190,13 @@ Module.register("MMM-WeatherMap", {
 		}
 		this.particles.forEach((p) => {
 			if (advance) {
+				let drift = fallback;
+				if (this.windField) {
+					const sampled = this.fieldDrift(this.windField, p.lon, p.lat, this.config.units);
+					if (sampled) {
+						drift = sampled;
+					}
+				}
 				const screen = this.map.project([p.lon, p.lat]);
 				const next = this.map.unproject([screen.x + drift.dx, screen.y + drift.dy]);
 				p.lon = next.lng;
@@ -1231,6 +1244,49 @@ Module.register("MMM-WeatherMap", {
 		if (this.ghosts.length > MAX_GHOSTS) {
 			this.ghosts.splice(0, this.ghosts.length - MAX_GHOSTS);
 		}
+	},
+
+	/* Bilinear sample of the HRRR lat/lon field (row 0 = north edge).
+	 * Positions outside clamp to the boundary value. Pure — tested. */
+	sampleWindField: function (field, lat, lon) {
+		if (!field || !field.dLat || !field.dLon || field.nx < 2 || field.ny < 2 || !Array.isArray(field.u) || !Array.isArray(field.v)) {
+			return null;
+		}
+		const row = Math.max(0, Math.min(field.ny - 1, (field.lat0 - lat) / field.dLat));
+		const col = Math.max(0, Math.min(field.nx - 1, (lon - field.lon0) / field.dLon));
+		const r0 = Math.min(field.ny - 2, Math.floor(row));
+		const c0 = Math.min(field.nx - 2, Math.floor(col));
+		const fr = Math.min(1, row - r0);
+		const fc = Math.min(1, col - c0);
+		const at = (values, r, c) => values[r * field.nx + c];
+		return {
+			u:
+				at(field.u, r0, c0) * (1 - fr) * (1 - fc) +
+				at(field.u, r0, c0 + 1) * (1 - fr) * fc +
+				at(field.u, r0 + 1, c0) * fr * (1 - fc) +
+				at(field.u, r0 + 1, c0 + 1) * fr * fc,
+			v:
+				at(field.v, r0, c0) * (1 - fr) * (1 - fc) +
+				at(field.v, r0, c0 + 1) * (1 - fr) * fc +
+				at(field.v, r0 + 1, c0) * fr * (1 - fc) +
+				at(field.v, r0 + 1, c0 + 1) * fr * fc
+		};
+	},
+
+	/* Screen drift for one map position from the gridded field: sample
+	 * U/V, convert to the legend's units, and reuse the uniform drift
+	 * scale so field and fallback motion match. Null without a field.
+	 * Pure — tested. */
+	fieldDrift: function (field, lon, lat, units) {
+		const sample = this.sampleWindField(field, lat, lon);
+		if (!sample) {
+			return null;
+		}
+		const speed = Math.hypot(sample.u, sample.v);
+		const direction = (Math.atan2(-sample.u, -sample.v) * 180) / Math.PI;
+		const scale = this.windLegendScale(units);
+		const toLegend = units === "metric" ? MS_TO_KMH : MS_TO_MPH;
+		return this.windDriftVector(direction, speed * toLegend, scale.max);
 	},
 
 	/* One trail: a single path through its reprojected history points,

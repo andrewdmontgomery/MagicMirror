@@ -231,6 +231,31 @@ function gridToLatLon(message, row, col) {
 	return { lat, lon };
 }
 
+/* Bilinear sample of a row-major full grid at fractional indices.
+ * Out-of-range positions clamp to the edge — the wind never blows
+ * from nowhere, it blows from the boundary value. */
+function bilinearSample(values, nx, ny, row, col) {
+	if (nx < 2 || ny < 2) {
+		return values[0];
+	}
+	const r = Math.max(0, Math.min(ny - 1, row));
+	const c = Math.max(0, Math.min(nx - 1, col));
+	const r0 = Math.min(ny - 2, Math.floor(r));
+	const c0 = Math.min(nx - 2, Math.floor(c));
+	const fr = Math.min(1, r - r0);
+	const fc = Math.min(1, c - c0);
+	const northwest = values[r0 * nx + c0];
+	const northeast = values[r0 * nx + c0 + 1];
+	const southwest = values[(r0 + 1) * nx + c0];
+	const southeast = values[(r0 + 1) * nx + c0 + 1];
+	return (
+		northwest * (1 - fr) * (1 - fc) +
+		northeast * (1 - fr) * fc +
+		southwest * fr * (1 - fc) +
+		southeast * fr * fc
+	);
+}
+
 module.exports = {
 	readMessage,
 	gridDimensions,
@@ -240,5 +265,6 @@ module.exports = {
 	signedMagnitude,
 	lambertParams,
 	latLonToGrid,
-	gridToLatLon
+	gridToLatLon,
+	bilinearSample
 };
