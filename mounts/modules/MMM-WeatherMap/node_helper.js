@@ -93,13 +93,14 @@ module.exports = NodeHelper.create({
 
 	/* Resample the Lambert window onto a uniform lat/lon grid the
 	 * browser can bilinear-sample with plain array math (no
-	 * projection code ships to the frontend). Row 0 is the north
-	 * edge: lat decreases as rows increase. Pure given decoded
-	 * arrays — covered by the fetchWindField integration test. */
+	 * projection code ships to the frontend). Output row 0 is the
+	 * north edge (lat decreases as rows increase) regardless of
+	 * storage order. Pure given decoded arrays — covered by the
+	 * fetchWindField integration test. */
 	resampleToLatLon: function (message, u, v, nx, ny, originRow, originCol, stride = WIND_FIELD_STRIDE, across = 40) {
 		const cells = (across - 1) * stride;
-		const northwest = grib2.gridToLatLon(message, originRow, originCol);
-		const southeast = grib2.gridToLatLon(message, originRow + cells, originCol + cells);
+		const northwest = grib2.gridToLatLon(message, originRow + cells, originCol);
+		const southeast = grib2.gridToLatLon(message, originRow, originCol + cells);
 		const lat0 = northwest.lat;
 		const dLat = (northwest.lat - southeast.lat) / (across - 1);
 		const lon0 = northwest.lon;
@@ -237,6 +238,10 @@ module.exports = NodeHelper.create({
 				window.originRow,
 				window.originCol
 			);
+			// No obs-nudging: the field serves raw. A flipped row axis
+			// once made the model look wrong at home and inspired a
+			// bias correction; cfgrib proved the model was right and
+			// the sampling mirrored. Raw model it is.
 			const homeU = u.values[Math.round(center.row) * dims.nx + Math.round(center.col)];
 			const homeV = v.values[Math.round(center.row) * dims.nx + Math.round(center.col)];
 			const homeSpeed = Math.hypot(homeU, homeV);

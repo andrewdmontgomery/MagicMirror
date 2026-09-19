@@ -243,12 +243,56 @@ describe("fetchWindField", () => {
 		}
 		assert.ok(max < 50, `regional max ${max} m/s`);
 		assert.ok(total / field.u.length < 15, `regional mean ${total / field.u.length} m/s`);
-		// Nearest node to home matches the direct full-grid sample
-		// (0.64 m/s from the Task-3 validation) within a generous band.
+		// Nearest node to home matches the cfgrib cross-check
+		// (3.09 m/s) within a generous band.
 		const homeR = Math.round((field.lat0 - 44.848) / field.dLat);
 		const homeC = Math.round((-93.043 - field.lon0) / field.dLon);
 		const homeSpeed = Math.hypot(field.u[homeR * 40 + homeC], field.v[homeR * 40 + homeC]);
-		assert.ok(Math.abs(homeSpeed - 0.64) < 1.0, `home node ${homeSpeed} m/s`);
+		assert.ok(Math.abs(homeSpeed - 3.09) < 1.0, `home node ${homeSpeed} m/s`);
+	});
+
+	it("serves the raw field with home matching cfgrib", async () => {
+		const ugrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "ugrd-sample.grb"));
+		const vgrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "vgrd-sample.grb"));
+		const realCycle = helper.latestCycle;
+		const realBytes = helper.fetchBytes;
+		const queued = [ugrd, vgrd];
+		const indexText = [
+			"1:0:d=2026091903:UGRD:10 m above ground:anl:",
+			`2:${ugrd.length}:d=2026091903:VGRD:10 m above ground:anl:`,
+			`3:${ugrd.length + vgrd.length}:d=2026091903:WIND:10 m above ground:0-0 day max fcst:`,
+			""
+		].join("\n");
+		helper.latestCycle = async () => ({ date: "20260919", hour: "03", indexUrl: "stub", indexText });
+		helper.fetchBytes = async () => queued.shift();
+		try {
+			await helper.fetchWindField({ lat: 44.848, lon: -93.043 });
+		} finally {
+			helper.latestCycle = realCycle;
+			helper.fetchBytes = realBytes;
+		}
+		const field = sent[0][1];
+		// Home node matches the independent cfgrib decode (3.09 m/s
+		// from 96°) — no obs-nudging, raw model throughout.
+		const homeR = Math.round((field.lat0 - 44.848) / field.dLat);
+		const homeC = Math.round((-93.043 - field.lon0) / field.dLon);
+		const homeU = field.u[homeR * 40 + homeC];
+		const homeV = field.v[homeR * 40 + homeC];
+		assert.ok(Math.abs(Math.hypot(homeU, homeV) - 3.09) < 0.5, `home ${homeU},${homeV}`);
+		const dir = ((Math.atan2(-homeU, -homeV) * 180) / Math.PI + 360) % 360;
+		assert.ok(Math.abs(dir - 96) < 10, `home dir ${dir}`);
+		// Far corner: compare against a direct full-grid sample through
+		// an independent path (grib2 projection + bilinear).
+		const grib2 = require("../../grib2.js");
+		const um = grib2.readMessage(ugrd);
+		const vm = grib2.readMessage(vgrd);
+		const fullU = grib2.unpackSimple(um);
+		const fullV = grib2.unpackSimple(vm);
+		const corner = grib2.latLonToGrid(um, field.lat0, field.lon0);
+		const directU = grib2.bilinearSample(fullU, 1799, 1059, corner.row, corner.col);
+		const directV = grib2.bilinearSample(fullV, 1799, 1059, corner.row, corner.col);
+		assert.ok(Math.abs(field.u[0] - directU) < 0.5, `corner u ${field.u[0]} vs ${directU}`);
+		assert.ok(Math.abs(field.v[0] - directV) < 0.5, `corner v ${field.v[0]} vs ${directV}`);
 	});
 
 	it("sends nothing without coordinates and never throws", async () => {

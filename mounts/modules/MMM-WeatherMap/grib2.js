@@ -199,8 +199,11 @@ function norm180(lon) {
 }
 
 /* Lat/lon to storage indices (fractional — ready for bilinear
- * interpolation). Storage row 0 is the NORTHERNMOST row, columns run
- * west-to-east. Out-of-grid points return out-of-range indices
+ * interpolation). Storage row 0 is the SOUTHERNMOST row (the section
+ * 3 first grid point), rows increase northward, columns run
+ * west-to-east. Verified against cfgrib/ecCodes indexing — an earlier
+ * revision had this flipped (row = Ny-1-j), which silently sampled
+ * mirrored latitudes. Out-of-grid points return out-of-range indices
  * without throwing; callers clamp or reject. */
 function latLonToGrid(message, lat, lon) {
 	const params = lambertParams(message);
@@ -212,8 +215,8 @@ function latLonToGrid(message, lat, lon) {
 	const x = rho * Math.sin(theta);
 	const y = cone.rhoOrigin - rho * Math.cos(theta);
 	const col = (x - cone.xOrigin) / params.dx;
-	const northward = (y - cone.yOrigin) / params.dy;
-	return { row: params.ny - 1 - northward, col };
+	const row = (y - cone.yOrigin) / params.dy;
+	return { row, col };
 }
 
 /* Storage indices back to lat/lon (lon normalized to [-180, 180]). */
@@ -221,9 +224,8 @@ function gridToLatLon(message, row, col) {
 	const params = lambertParams(message);
 	const cone = coneConstants(params);
 	const radians = Math.PI / 180;
-	const northward = params.ny - 1 - row;
 	const x = cone.xOrigin + col * params.dx;
-	const y = cone.yOrigin + northward * params.dy;
+	const y = cone.yOrigin + row * params.dy;
 	const rho = Math.sign(cone.n) * Math.hypot(x, cone.rhoOrigin - y);
 	const theta = Math.atan2(x, cone.rhoOrigin - y);
 	const lat = (2 * Math.atan(Math.pow((params.radius * cone.f) / rho, 1 / cone.n)) - Math.PI / 2) / radians;

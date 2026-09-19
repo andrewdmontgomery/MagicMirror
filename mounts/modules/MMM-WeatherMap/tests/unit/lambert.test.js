@@ -3,9 +3,11 @@
  *
  * Uses tests/fixtures/ugrd-sample.grb (see grib2.test.js for provenance).
  * All projection parameters come from the message's own section 3 —
- * no hardcoded grid constants. Conventions (verified against the
- * fixture): storage row 0 is the NORTHERNMOST row, columns run
- * west-to-east, and rows/cols may be fractional for interpolation.
+ * no hardcoded grid constants. Conventions (verified against
+ * cfgrib/ecCodes indexing): storage row 0 is the SOUTHERNMOST row
+ * (the section 3 first grid point), rows increase northward, columns
+ * run west-to-east, and rows/cols may be fractional for
+ * interpolation.
  */
 const { describe, it } = require("node:test");
 const assert = require("node:assert/strict");
@@ -25,21 +27,20 @@ function message() {
 
 describe("latLonToGrid", () => {
 	it("maps home to north-central Minnesota, not just inside", () => {
-		// Tight box around the independently computed position
-		// (row 290, col 1017 — see the throwaway Python Snyder check
-		// in the task notes). A loose in-bounds check once hid a
-		// 1000x Dx/Dy unit error that parked home at col 1.
+		// Tight box around the cfgrib-verified position (row 768,
+		// col 1017). Loose in-bounds checks once hid BOTH a 1000x
+		// Dx/Dy unit error (home at col 1) and a flipped row axis
+		// (home at row 290, mirrored latitudes).
 		const { row, col } = latLonToGrid(message(), HOME.lat, HOME.lon);
 		assert.ok(Math.abs(col - 1017) < 25, `col ${col}`);
-		assert.ok(Math.abs(row - 290) < 25, `row ${row}`);
+		assert.ok(Math.abs(row - 768) < 25, `row ${row}`);
 	});
 
 	it("maps the first grid point to the south-west storage corner", () => {
-		// First point is the southernmost row (1058) at column 0 —
-		// storage row 0 is north.
+		// First point is storage (0, 0): row 0 is south.
 		const { row, col } = latLonToGrid(message(), FIRST.lat, FIRST.lon);
 		assert.ok(Math.abs(col) < 1e-6, `col ${col}`);
-		assert.ok(Math.abs(row - 1058) < 1e-6, `row ${row}`);
+		assert.ok(Math.abs(row) < 1e-6, `row ${row}`);
 	});
 
 	it("reports out-of-grid points outside the index range", () => {
@@ -50,7 +51,7 @@ describe("latLonToGrid", () => {
 
 describe("gridToLatLon", () => {
 	it("inverts the first grid point", () => {
-		const { lat, lon } = gridToLatLon(message(), 1058, 0);
+		const { lat, lon } = gridToLatLon(message(), 0, 0);
 		assert.ok(Math.abs(lat - FIRST.lat) < 0.01, `lat ${lat}`);
 		assert.ok(Math.abs(lon - FIRST.lon) < 0.01, `lon ${lon}`);
 	});
