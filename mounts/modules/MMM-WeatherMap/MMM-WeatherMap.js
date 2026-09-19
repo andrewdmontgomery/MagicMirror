@@ -1,10 +1,24 @@
 /* MMM-WeatherMap — animated weather map on a CARTO dark basemap (MapLibre GL):
  * rain radar, wind particles, history/future timeline.
+ *
+ * Views: the map renders one view at a time ("precip" today, "wind" new).
+ * The VIEWS registry is the extension point for future views (e.g. AQI):
+ * add the key here, a legend branch in legendDiv(), a timeline branch in
+ * timelineDiv(), and a layer branch in initMap()/restartAnimation().
+ * View selection is manual for now (viewControl + WEATHERMAP_SET_VIEW);
+ * a future auto-selector can drive the same setView() — e.g. default to
+ * whichever of rain/AQI/wind is most relevant.
  */
 
 /* Frame-layer ceiling: RainViewer serves ~13 past frames; anything beyond
  * this is a runaway, not data. Used only to bound teardownRadar's sweep. */
 const MAX_RADAR_LAYERS = 64;
+
+/* Supported map views. Order here is the toggle-button order. */
+const VIEWS = ["precip", "wind"];
+
+/* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
+const WIND_PARTICLE_COUNT = 250;
 
 Module.register("MMM-WeatherMap", {
 	defaults: {
@@ -21,7 +35,17 @@ Module.register("MMM-WeatherMap", {
 		showLegend: true,
 		showTimeline: true,
 		updateInterval: 10 * 60 * 1000,
-		animationSpeed: 1000
+		animationSpeed: 1000,
+		/* Active view on startup; toggled manually via viewControl or the
+		 * WEATHERMAP_SET_VIEW notification (payload: { view }). */
+		defaultView: "precip",
+		/* Should mirror the global units — "imperial" (mph) or "metric" (km/h). */
+		units: "imperial",
+		/* Open-Meteo wind refresh (uniform field until the HRRR gridded
+		 * field lands; then this payload grows a `grids` member). */
+		windUpdateInterval: 30 * 60 * 1000,
+		windHoursPast: 4,
+		windHoursFuture: 12
 	},
 
 	start: function () {
@@ -38,11 +62,32 @@ Module.register("MMM-WeatherMap", {
 		this.frameTimer = null;
 		this.playing = true;
 		this.framesKey = null;
+		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
+		this.wind = null;
+		this.windIndex = 0;
+		this.particles = [];
+		this.particleRaf = null;
+		this.particleCanvas = null;
 		this.getStyle();
 		this.getFrames();
+		this.getWind();
 		setInterval(() => {
 			this.getFrames();
 		}, this.config.updateInterval);
+		setInterval(() => {
+			this.getWind();
+		}, this.config.windUpdateInterval);
+	},
+
+	/* MagicMirror lifecycle: pause the particle loop when hidden. */
+	suspend: function () {
+		this.stopParticles();
+	},
+
+	resume: function () {
+		if (this.isWindView() && this.playing) {
+			this.startParticles();
+		}
 	},
 
 	getStyle: function () {
@@ -53,6 +98,113 @@ Module.register("MMM-WeatherMap", {
 		this.sendSocketNotification("GET_VECTOR_FRAMES", {});
 	},
 
+	getWind: function () {
+		this.sendSocketNotification("GET_WIND_SUMMARY", {
+			lat: this.config.lat,
+			lon: this.config.lon,
+			units: this.config.units
+		});
+	},
+
+	/* External view control (manual toggle today, auto-selector later):
+	 * `sendNotification("WEATHERMAP_SET_VIEW", { view: "wind" })`.
+	 * Manual toggles broadcast WEATHERMAP_VIEW_CHANGED for observers. */
+	notificationReceived: function (notification, payload) {
+		if (notification === "WEATHERMAP_SET_VIEW" && payload && payload.view) {
+			this.setView(payload.view);
+		}
+	},
+
+	isWindView: function () {
+		return this.view === "wind";
+	},
+
+	setView: function (view) {
+		if (!VIEWS.includes(view) || view === this.view) {
+			return false;
+		}
+		this.view = view;
+		this.stopParticles();
+		if (typeof this.sendNotification === "function") {
+			this.sendNotification("WEATHERMAP_VIEW_CHANGED", { view });
+		}
+		if (typeof this.updateDom === "function") {
+			this.updateDom(this.config.animationSpeed);
+		}
+		return true;
+	},
+
+	/* Wind legend scale, Apple-style: numeric ticks over a speed gradient.
+	 * Imperial matches Apple's 0/25/50/75 mph; metric is the rounded
+	 * km/h equivalent. Pure — unit-tested. */
+	windLegendScale: function (units) {
+		if (units === "metric") {
+			return { unit: "km/h", max: 120, ticks: [120, 80, 40, 0] };
+		}
+		return { unit: "mph", max: 75, ticks: [75, 50, 25, 0] };
+	},
+
+	/* Slice the hourly wind series to the timeline window: the N hours
+	 * before now through the M hours after it. Pure — unit-tested. */
+	windWindow: function (hourly, nowSec, hoursPast, hoursFuture) {
+		if (!hourly || !Array.isArray(hourly.time) || hourly.time.length === 0) {
+			return [];
+		}
+		let anchor = 0;
+		hourly.time.forEach((t, i) => {
+			if (t <= nowSec) {
+				anchor = i;
+			}
+		});
+		const start = Math.max(0, anchor - hoursPast);
+		const end = Math.min(hourly.time.length - 1, anchor + hoursFuture);
+		const window = [];
+		for (let i = start; i <= end; i += 1) {
+			window.push({
+				time: hourly.time[i],
+				speed: hourly.speed ? hourly.speed[i] : null,
+				direction: hourly.direction ? hourly.direction[i] : null,
+				isNow: i === anchor
+			});
+		}
+		return window;
+	},
+
+	/* Index of the "now" slot inside the current wind window, so a
+	 * fresh payload opens on the present hour. Pure — unit-tested. */
+	defaultWindIndex: function () {
+		if (!this.wind || !this.wind.hourly) {
+			return 0;
+		}
+		const window = this.windWindow(
+			this.wind.hourly,
+			Math.floor(Date.now() / 1000),
+			this.config.windHoursPast,
+			this.config.windHoursFuture
+		);
+		const nowAt = window.findIndex((slot) => slot.isNow);
+		return nowAt === -1 ? 0 : nowAt;
+	},
+
+	/* Screen-space drift per animation frame for a uniform wind field.
+	 * directionDeg is meteorological (where the wind blows FROM); the
+	 * particle moves toward direction+180. Pure — unit-tested. */
+	windDriftVector: function (directionDeg, speed, max) {
+		const radians = ((directionDeg || 0) + 180) * (Math.PI / 180);
+		const magnitude = 0.3 + (Math.min(Math.max(speed || 0, 0), max || 75) / (max || 75)) * 2.2;
+		return {
+			dx: Math.sin(radians) * magnitude,
+			dy: -Math.cos(radians) * magnitude
+		};
+	},
+
+	/* 16-point compass abbreviation for the center badge. Pure. */
+	windCompass16: function (degrees) {
+		const points = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+		const normalized = ((degrees || 0) % 360 + 360) % 360;
+		return points[Math.round(normalized / 22.5) % 16];
+	},
+
 	socketNotificationReceived: function (notification, payload) {
 		if (notification === "VECTOR_STYLE_RESULT") {
 			if (payload && payload.style) {
@@ -61,6 +213,17 @@ Module.register("MMM-WeatherMap", {
 				this.styleError = (payload && payload.error) || "Style fetch failed.";
 			}
 			this.updateDom(this.config.animationSpeed);
+		} else if (notification === "WIND_SUMMARY_RESULT") {
+			if (payload && payload.hourly) {
+				this.wind = payload;
+				this.windIndex = this.defaultWindIndex();
+				if (this.isWindView()) {
+					this.stopParticles();
+					this.updateDom(this.config.animationSpeed);
+				} else {
+					this.updateTimeline();
+				}
+			}
 		} else if (notification === "VECTOR_FRAMES_RESULT") {
 			if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
 				const key = `${payload.frames[0].time}-${payload.frames[payload.frames.length - 1].time}`;
@@ -146,6 +309,16 @@ Module.register("MMM-WeatherMap", {
 			mapDiv.appendChild(this.legendDiv());
 		}
 
+		if (this.isWindView()) {
+			mapDiv.appendChild(this.windBadgeDiv());
+			const particles = document.createElement("canvas");
+			particles.className = "vector-particles";
+			mapDiv.appendChild(particles);
+			this.particleCanvas = particles;
+		} else {
+			this.particleCanvas = null;
+		}
+
 		if (this.config.showTimeline) {
 			mapDiv.appendChild(this.timelineDiv());
 		}
@@ -160,6 +333,7 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	renderMapView: function (mapDiv) {
+		this.stopParticles();
 		if (this.map) {
 			this.map.remove();
 			this.map = null;
@@ -188,12 +362,44 @@ Module.register("MMM-WeatherMap", {
 			attributionControl: false
 		});
 		this.map.addControl(this.resetControl(), "top-right");
+		this.map.addControl(this.viewControl(), "top-right");
 		this.map.on("load", () => {
-			this.addRadarLayer();
+			if (!this.isWindView()) {
+				this.addRadarLayer();
+			}
 			this.addMarkers();
 			this.applyPosition();
 			this.restartAnimation();
+			if (this.isWindView()) {
+				this.startParticles();
+			}
 		});
+	},
+
+	/* Manual view toggle (precip / wind today; more views later).
+	 * One button per VIEWS entry; the active view is pressed. */
+	viewControl: function () {
+		const module = this;
+		return {
+			onAdd: function () {
+				const container = document.createElement("div");
+				container.className = "maplibregl-ctrl maplibregl-ctrl-group vector-view-wrap";
+				const icons = { precip: "🌧", wind: "💨" };
+				const labels = { precip: "Precipitation view", wind: "Wind view" };
+				VIEWS.forEach((view) => {
+					const button = document.createElement("button");
+					button.className = "vector-view" + (module.view === view ? " vector-view-active" : "");
+					button.setAttribute("aria-label", labels[view] || view);
+					button.setAttribute("title", labels[view] || view);
+					button.setAttribute("aria-pressed", module.view === view ? "true" : "false");
+					button.textContent = icons[view] || view;
+					button.addEventListener("click", () => module.setView(view));
+					container.appendChild(button);
+				});
+				return container;
+			},
+			onRemove: function () {}
+		};
 	},
 
 	/* Crosshair reset control: jumps back to the configured position. */
@@ -231,6 +437,9 @@ Module.register("MMM-WeatherMap", {
 	 * RainViewer's Universal Blue scheme (color scheme 2), so the swatch
 	 * means the same thing as the radar cells. */
 	legendDiv: function () {
+		if (this.isWindView()) {
+			return this.windLegendDiv();
+		}
 		const legend = document.createElement("div");
 		legend.className = "vector-legend";
 		legend.innerHTML =
@@ -241,6 +450,67 @@ Module.register("MMM-WeatherMap", {
 			"<span>Extreme</span><span>Heavy</span><span>Moderate</span><span>Light</span>" +
 			"</div></div>";
 		return legend;
+	},
+
+	/* Apple-style wind legend (see the macOS Weather wind map): a dark
+	 * pill titled "Wind (mph"/"km/h)" with a vertical speed gradient and
+	 * numeric ticks — the same layout as the precip legend, so the two
+	 * views feel like one map. */
+	windLegendDiv: function () {
+		const scale = this.windLegendScale(this.config.units);
+		const legend = document.createElement("div");
+		legend.className = "vector-legend vector-legend-wind";
+		const labels = scale.ticks.map((tick) => `<span>${tick}</span>`).join("");
+		legend.innerHTML =
+			`<div class="vector-legend-title">Wind (${scale.unit})</div>` +
+			'<div class="vector-legend-body">' +
+			'<div class="vector-legend-bar vector-legend-bar-wind"></div>' +
+			`<div class="vector-legend-labels">${labels}</div>` +
+			"</div>";
+		return legend;
+	},
+
+	/* Apple-style center badge: compass abbreviation over the current
+	 * wind speed, like the ESE / 10 MPH circle on the macOS wind map. */
+	windBadgeDiv: function () {
+		const badge = document.createElement("div");
+		badge.className = "vector-wind-badge";
+		this.windBadge = badge;
+		this.updateWindBadge();
+		return badge;
+	},
+
+	updateWindBadge: function () {
+		if (!this.windBadge) {
+			return;
+		}
+		const slot = this.currentWindSlot();
+		const scale = this.windLegendScale(this.config.units);
+		if (!slot || slot.speed === null || slot.speed === undefined) {
+			this.windBadge.innerHTML =
+				'<div class="vector-wind-badge-dir">–</div>' +
+				`<div class="vector-wind-badge-speed">–</div><div class="vector-wind-badge-unit">${scale.unit}</div>`;
+			return;
+		}
+		const direction = this.windCompass16(slot.direction);
+		const speed = Math.round(slot.speed);
+		this.windBadge.innerHTML =
+			`<div class="vector-wind-badge-dir">${direction}</div>` +
+			`<div class="vector-wind-badge-speed">${speed}</div>` +
+			`<div class="vector-wind-badge-unit">${scale.unit.toUpperCase()}</div>`;
+	},
+
+	currentWindSlot: function () {
+		if (!this.wind || !this.wind.hourly) {
+			return null;
+		}
+		const window = this.windWindow(
+			this.wind.hourly,
+			Math.floor(Date.now() / 1000),
+			this.config.windHoursPast,
+			this.config.windHoursFuture
+		);
+		return window[this.windIndex] || window[0] || null;
 	},
 
 	/* Static attribution caption (CARTO/OSM terms require it visible).
@@ -344,6 +614,10 @@ Module.register("MMM-WeatherMap", {
 			clearInterval(this.frameTimer);
 			this.frameTimer = null;
 		}
+		if (this.isWindView()) {
+			this.restartWindAnimation();
+			return;
+		}
 		if (!this.frames || this.frames.frames.length < 2) {
 			return;
 		}
@@ -363,22 +637,7 @@ Module.register("MMM-WeatherMap", {
 			const prev = this.frameIndex;
 			this.frameIndex = (this.frameIndex + 1) % this.frames.frames.length;
 			if (this.frameIndex === 0) {
-				// Full radar loop done — advance map position if its loop
-				// quota is met, mirroring MMM-RAIN-MAP's mapPositions.
-				// Only jumps on an actual change so manual pan/zoom isn't
-				// yanked back when there's a single position.
-				this.loopCount += 1;
-				const positions = this.positions();
-				const pos = positions[this.positionIndex % positions.length];
-				const quota = (pos && pos.loops) || 1;
-				if (this.loopCount >= quota) {
-					this.loopCount = 0;
-					const next = (this.positionIndex + 1) % positions.length;
-					if (next !== this.positionIndex) {
-						this.positionIndex = next;
-						this.applyPosition();
-					}
-				}
+				this.advancePosition();
 			}
 			this.showFrame(this.frameIndex, { prev });
 		}, this.config.animationSpeedMs);
@@ -401,8 +660,66 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
+	/* Wind tick: advance the hourly slot; the badge, timeline, and
+	 * particle drift all read the current slot. */
+	restartWindAnimation: function () {
+		if (!this.wind || !this.wind.hourly) {
+			return;
+		}
+		const slots = this.windWindow(
+			this.wind.hourly,
+			Math.floor(Date.now() / 1000),
+			this.config.windHoursPast,
+			this.config.windHoursFuture
+		);
+		if (slots.length < 2) {
+			return;
+		}
+		this.windIndex = Math.min(this.windIndex, slots.length - 1);
+		this.showWindFrame(this.windIndex);
+		if (!this.playing) {
+			return;
+		}
+		this.frameTimer = setInterval(() => {
+			this.windIndex = (this.windIndex + 1) % slots.length;
+			if (this.windIndex === 0) {
+				this.advancePosition();
+			}
+			this.showWindFrame(this.windIndex);
+		}, this.config.animationSpeedMs);
+	},
+
+	/* Full radar loop done — advance map position if its loop quota is
+	 * met. Only jumps on an actual change so manual pan/zoom isn't
+	 * yanked back when there's a single position. */
+	advancePosition: function () {
+		this.loopCount += 1;
+		const positions = this.positions();
+		const pos = positions[this.positionIndex % positions.length];
+		const quota = (pos && pos.loops) || 1;
+		if (this.loopCount >= quota) {
+			this.loopCount = 0;
+			const next = (this.positionIndex + 1) % positions.length;
+			if (next !== this.positionIndex) {
+				this.positionIndex = next;
+				this.applyPosition();
+			}
+		}
+	},
+
+	/* Display one wind slot: badge plus timeline label + progress. */
+	showWindFrame: function (index) {
+		this.windIndex = index;
+		this.updateWindBadge();
+		this.updateTimeline();
+	},
+
 	/* Display one frame: paint swap plus timeline label + progress. */
 	showFrame: function (index, { paint = true, prev } = {}) {
+		if (this.isWindView()) {
+			this.showWindFrame(index);
+			return;
+		}
 		this.frameIndex = index;
 		if (paint && this.map && this.map.getSource(`rainviewer-${index}`)) {
 			if (prev !== undefined && this.map.getSource(`rainviewer-${prev}`)) {
@@ -432,6 +749,26 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	scrubTo: function (ratio) {
+		if (this.isWindView()) {
+			if (!this.wind || !this.wind.hourly) {
+				return;
+			}
+			const slots = this.windWindow(
+				this.wind.hourly,
+				Math.floor(Date.now() / 1000),
+				this.config.windHoursPast,
+				this.config.windHoursFuture
+			);
+			if (slots.length === 0) {
+				return;
+			}
+			const index = Math.min(slots.length - 1, Math.max(0, Math.round(ratio * (slots.length - 1))));
+			if (this.playing) {
+				this.togglePlay();
+			}
+			this.showWindFrame(index);
+			return;
+		}
 		if (!this.frames) {
 			return;
 		}
@@ -455,10 +792,68 @@ Module.register("MMM-WeatherMap", {
 		return `${hours}:${minutes} ${ampm}`;
 	},
 
+	timelineDiv: function () {
+		if (this.isWindView()) {
+			return this.windTimelineDiv();
+		}
+		return this.precipTimelineDiv();
+	},
+
+	/* Apple-style wind timeline: play/pause, a "Wind Speed" title with
+	 * the current date, and an hourly track spanning past analyses into
+	 * forecast hours — mirroring the macOS Weather wind map's bottom bar. */
+	windTimelineDiv: function () {
+		const timeline = document.createElement("div");
+		timeline.className = "vector-timeline";
+
+		this.playButton = document.createElement("button");
+		this.playButton.className = "vector-tl-play";
+		this.playButton.setAttribute("aria-label", "Play or pause wind animation");
+		this.updatePlayButton();
+		this.playButton.addEventListener("click", () => this.togglePlay());
+		timeline.appendChild(this.playButton);
+
+		const main = document.createElement("div");
+		main.className = "vector-tl-main";
+
+		const title = document.createElement("div");
+		title.className = "vector-tl-label light";
+		title.textContent = "Wind Speed";
+		main.appendChild(title);
+
+		this.timelineLabel = document.createElement("div");
+		this.timelineLabel.className = "vector-tl-date light";
+		const now = new Date(Date.now());
+		this.timelineLabel.textContent = now.toLocaleDateString("en-US", {
+			weekday: "long",
+			month: "long",
+			day: "numeric",
+			year: "numeric"
+		});
+		main.appendChild(this.timelineLabel);
+
+		this.timelineTrack = document.createElement("div");
+		this.timelineTrack.className = "vector-tl-track";
+		this.timelineTrack.addEventListener("click", (event) => {
+			const rect = this.timelineTrack.getBoundingClientRect();
+			this.scrubTo((event.clientX - rect.left) / rect.width);
+		});
+		main.appendChild(this.timelineTrack);
+
+		this.timelineTicks = document.createElement("div");
+		this.timelineTicks.className = "vector-tl-ticks light";
+		main.appendChild(this.timelineTicks);
+
+		timeline.appendChild(main);
+		this.buildTimelineTicks();
+		this.updateTimeline();
+		return timeline;
+	},
+
 	/* Apple-style history timeline: play/pause, current frame time, and a
 	 * scrubbable track. Free RainViewer has past frames only, so this
 	 * covers history, not forecast. */
-	timelineDiv: function () {
+	precipTimelineDiv: function () {
 		const timeline = document.createElement("div");
 		timeline.className = "vector-timeline";
 
@@ -500,8 +895,36 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
+	/* Hour-only label for the wind track ("8PM", "12AM") — matches the
+	 * macOS wind timeline, where hourly slots are too dense for minutes. */
+	formatHourLabel: function (unixSeconds) {
+		const date = new Date(unixSeconds * 1000);
+		const hours = date.getHours();
+		const ampm = hours >= 12 ? "PM" : "AM";
+		return `${hours % 12 || 12}${ampm}`;
+	},
+
+	currentWindWindow: function () {
+		if (!this.wind || !this.wind.hourly) {
+			return [];
+		}
+		return this.windWindow(
+			this.wind.hourly,
+			Math.floor(Date.now() / 1000),
+			this.config.windHoursPast,
+			this.config.windHoursFuture
+		);
+	},
+
 	buildTimelineTicks: function () {
-		if (!this.timelineTicks || !this.frames) {
+		if (!this.timelineTicks) {
+			return;
+		}
+		if (this.isWindView()) {
+			this.buildWindTicks();
+			return;
+		}
+		if (!this.frames) {
 			return;
 		}
 		this.timelineTicks.innerHTML = "";
@@ -522,8 +945,38 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
+	/* Hourly wind ticks: label every slot's hour, bolding Now — the
+	 * track doubles as the scrub progress, like Apple's wind bar. */
+	buildWindTicks: function () {
+		if (!this.timelineTicks) {
+			return;
+		}
+		this.timelineTicks.innerHTML = "";
+		this.timelineTrack.innerHTML = "";
+		this.currentWindWindow().forEach((slot) => {
+			const tick = document.createElement("div");
+			tick.className = "vector-tl-tick";
+			this.timelineTrack.appendChild(tick);
+			const label = document.createElement("span");
+			if (slot.isNow) {
+				label.textContent = "Now";
+				label.className = "vector-tl-now";
+			} else {
+				label.textContent = this.formatHourLabel(slot.time);
+			}
+			this.timelineTicks.appendChild(label);
+		});
+	},
+
 	updateTimeline: function () {
-		if (!this.frames || !this.timelineLabel) {
+		if (!this.timelineLabel) {
+			return;
+		}
+		if (this.isWindView()) {
+			this.updateWindTimeline();
+			return;
+		}
+		if (!this.frames) {
 			return;
 		}
 		if (!this.timelineTicks.hasChildNodes()) {
@@ -542,5 +995,104 @@ Module.register("MMM-WeatherMap", {
 		for (let i = 0; i < ticks.length; i += 1) {
 			ticks[i].classList.toggle("vector-tl-active", i <= this.frameIndex);
 		}
+	},
+
+	/* Wind track progress only — the date label above it stays fixed. */
+	updateWindTimeline: function () {
+		if (!this.timelineTrack || !this.timelineTicks) {
+			return;
+		}
+		if (!this.timelineTicks.hasChildNodes()) {
+			this.buildTimelineTicks();
+		}
+		const ticks = this.timelineTrack.children;
+		for (let i = 0; i < ticks.length; i += 1) {
+			ticks[i].classList.toggle("vector-tl-active", i <= this.windIndex);
+		}
+	},
+
+	/* Uniform-flow particle overlay: ~250 white streaks advected across
+	 * the map along the current slot's wind vector, with a translucent
+	 * fade for motion-blur trails (not full clears). Runs only in the
+	 * wind view; the HRRR gridded field will replace the uniform vector
+	 * with bilinear sampling at the same call site. */
+	startParticles: function () {
+		if (this.particleRaf || !this.particleCanvas || !this.isWindView()) {
+			return;
+		}
+		const canvas = this.particleCanvas;
+		const parent = canvas.parentElement;
+		if (!parent) {
+			return;
+		}
+		canvas.width = parent.clientWidth || 420;
+		canvas.height = parent.clientHeight || 420;
+		const ctx2d = canvas.getContext("2d");
+		if (!ctx2d) {
+			return;
+		}
+		this.particles = [];
+		for (let i = 0; i < WIND_PARTICLE_COUNT; i += 1) {
+			this.particles.push(this.spawnParticle(canvas.width, canvas.height));
+		}
+		const step = () => {
+			if (!this.isWindView() || !this.particleCanvas) {
+				this.particleRaf = null;
+				return;
+			}
+			if (this.playing) {
+				this.advectParticles(ctx2d, canvas.width, canvas.height);
+			}
+			this.particleRaf = requestAnimationFrame(step);
+		};
+		this.particleRaf = requestAnimationFrame(step);
+	},
+
+	stopParticles: function () {
+		if (this.particleRaf && typeof cancelAnimationFrame === "function") {
+			cancelAnimationFrame(this.particleRaf);
+		}
+		this.particleRaf = null;
+		this.particles = [];
+	},
+
+	spawnParticle: function (width, height) {
+		return {
+			x: Math.random() * width,
+			y: Math.random() * height,
+			age: 0,
+			maxAge: 60 + Math.floor(Math.random() * 90)
+		};
+	},
+
+	advectParticles: function (ctx2d, width, height) {
+		const slot = this.currentWindSlot();
+		const scale = this.windLegendScale(this.config.units);
+		const drift = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
+		ctx2d.globalCompositeOperation = "destination-in";
+		ctx2d.fillStyle = "rgba(0, 0, 0, 0.92)";
+		ctx2d.fillRect(0, 0, width, height);
+		ctx2d.globalCompositeOperation = "source-over";
+		ctx2d.strokeStyle = "rgba(255, 255, 255, 0.6)";
+		ctx2d.lineWidth = 1.5;
+		ctx2d.lineCap = "round";
+		ctx2d.beginPath();
+		this.particles.forEach((p) => {
+			const nextX = p.x + drift.dx;
+			const nextY = p.y + drift.dy;
+			ctx2d.moveTo(p.x, p.y);
+			ctx2d.lineTo(nextX, nextY);
+			p.x = nextX;
+			p.y = nextY;
+			p.age += 1;
+			if (p.age > p.maxAge || p.x < 0 || p.x > width || p.y < 0 || p.y > height || Math.random() < 0.01) {
+				const fresh = this.spawnParticle(width, height);
+				p.x = fresh.x;
+				p.y = fresh.y;
+				p.age = 0;
+				p.maxAge = fresh.maxAge;
+			}
+		});
+		ctx2d.stroke();
 	}
 });
