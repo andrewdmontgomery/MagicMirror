@@ -1237,9 +1237,10 @@ Module.register("MMM-WeatherMap", {
 				this.particleRaf = null;
 				return;
 			}
-			// Paused: redraw from stored history without advancing, so
-			// the field still tracks the map when it moves.
-			this.advectParticles(ctx2d, canvas.width, canvas.height, this.playing);
+			// Timeline pause never stills the air: particles advect
+			// every frame, paused or playing — only the hourly advance
+			// halts. (Module hide still stops everything via suspend.)
+			this.advectParticles(ctx2d, canvas.width, canvas.height, true);
 			this.particleRaf = requestAnimationFrame(step);
 		};
 		this.particleRaf = requestAnimationFrame(step);
