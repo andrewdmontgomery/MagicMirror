@@ -100,6 +100,8 @@ Module.register("MMM-WeatherMap", {
 		this.windBadge = null;
 		this.lastMarkerStatus = null;
 		this.particleGL = null;
+		this.particleFade = 0;
+		this.particleFadeTarget = 0;
 		// Style readiness (set on map load): layer setup gates on
 		// THIS, never on map.loaded() — loaded() stays false under
 		// continuous tile churn and would orphan layers forever.
@@ -107,6 +109,8 @@ Module.register("MMM-WeatherMap", {
 		this.ghosts = [];
 		this.particles = [];
 		this.particleGL = null;
+		this.particleFade = 0;
+		this.particleFadeTarget = 0;
 		this.getStyle();
 		this.getFrames();
 		this.getWind();
@@ -175,7 +179,7 @@ Module.register("MMM-WeatherMap", {
 			return false;
 		}
 		this.view = view;
-		this.removeParticleLayer();
+		this.syncContentToView();
 		if (typeof this.sendNotification === "function") {
 			this.sendNotification("WEATHERMAP_VIEW_CHANGED", { view });
 		}
@@ -183,6 +187,105 @@ Module.register("MMM-WeatherMap", {
 			this.updateDom(this.config.animationSpeed);
 		}
 		return true;
+	},
+
+	/* Content crossfade driver: the map instance is never destroyed
+	 * on a view switch (that flash was the old UX) — layers fade
+	 * beneath persisting chrome, and updateDom rebuilds only the
+	 * legend/timeline/callout nodes around the live map. */
+	syncContentToView: function () {
+		if (!this.map) {
+			return;
+		}
+		this.updateViewButtons();
+		this.restartAnimation();
+		if (this.isWindView()) {
+			this.fadeRadarTo(0);
+			this.scheduleRadarHide();
+			if (this.mapReady) {
+				this.ensureParticleLayer();
+			}
+		} else {
+			this.fadeParticlesOut();
+			this.setRadarLayersVisible(true);
+		}
+		this.positionWindCallout();
+	},
+
+	/* One fade step toward a 0..1 target (~0.33s at 60fps). Pure. */
+	stepFade: function (current, target) {
+		const step = 1 / 20;
+		if (current < target) {
+			return Math.min(target, current + step);
+		}
+		if (current > target) {
+			return Math.max(target, current - step);
+		}
+		return target;
+	},
+
+	/* Fade every radar layer to an opacity (the paint transition
+	 * glides it). Guards missing layers for pre-load calls. */
+	fadeRadarTo: function (opacity) {
+		if (!this.map || !this.frames) {
+			return;
+		}
+		this.frames.frames.forEach((frame, i) => {
+			if (this.map.getLayer(`rainviewer-${i}`)) {
+				this.map.setPaintProperty(`rainviewer-${i}`, "raster-opacity", opacity);
+			}
+		});
+	},
+
+	/* Radar visibility switch (after a fade-out completes, or before
+	 * fading back in). */
+	setRadarLayersVisible: function (visible) {
+		if (!this.map || !this.frames) {
+			return;
+		}
+		this.frames.frames.forEach((frame, i) => {
+			if (this.map.getLayer(`rainviewer-${i}`)) {
+				this.map.setLayoutProperty(`rainviewer-${i}`, "visibility", visible ? "visible" : "none");
+			}
+		});
+	},
+
+	scheduleRadarHide: function () {
+		setTimeout(() => this.maybeHideRadar(), 450);
+	},
+
+	fadeParticlesOut: function () {
+		this.particleFadeTarget = 0;
+		setTimeout(() => this.maybeRemoveParticles(), 450);
+	},
+
+	maybeRemoveParticles: function () {
+		if (!this.isWindView()) {
+			this.removeParticleLayer();
+		}
+	},
+
+	maybeHideRadar: function () {
+		if (this.view !== "precip") {
+			this.setRadarLayersVisible(false);
+		}
+	},
+
+	updateViewButtons: function () {
+		if (!this.viewButtons) {
+			return;
+		}
+		VIEWS.forEach((view) => {
+			const button = this.viewButtons[view];
+			if (!button) {
+				return;
+			}
+			const active = view === this.view;
+			button.className = "vector-view" + (active ? " vector-view-active" : "");
+			if (button.setAttribute) {
+				button.setAttribute("aria-pressed", active ? "true" : "false");
+			}
+		});
 	},
 
 	/* Wind legend scale, Apple-style: numeric ticks over a speed gradient.
@@ -440,46 +543,85 @@ Module.register("MMM-WeatherMap", {
 			return wrapper;
 		}
 
+		// Live map? Reuse its container: moving the SAME mapDiv into
+		// the fresh wrapper preserves GL state, so view switches and
+		// data refreshes never flash a blank map. Only the chrome
+		// around it rebuilds.
+		if (this.map && this.mapDiv) {
+			this.rebuildOverlays();
+			wrapper.appendChild(this.mapDiv);
+			wrapper.appendChild(this.attributionDiv());
+			setTimeout(() => {
+				if (!this.map) {
+					this.renderMapView(this.mapDiv);
+					return;
+				}
+				this.map.resize();
+				this.syncContentToView();
+			}, 0);
+
+			return wrapper;
+		}
+
 		const mapDiv = document.createElement("div");
 		mapDiv.className = "vector-rain-map";
 		mapDiv.style.width = this.config.mapWidth;
 		mapDiv.style.height = this.config.mapHeight;
 		wrapper.appendChild(mapDiv);
+		this.mapDiv = mapDiv;
+		this.rebuildOverlays();
+		wrapper.appendChild(this.attributionDiv());
 
+		// Fresh map only: init after insert, when the new container
+		// has dimensions.
+		setTimeout(() => this.renderMapView(mapDiv), 0);
+
+		return wrapper;
+	},
+
+	/* Chrome rebuild around a live (or forthcoming) map: legend,
+	 * callout, and timeline nodes are disposable; the GL map is not.
+	 * Shared by fresh builds and updateDom refreshes. */
+	rebuildOverlays: function () {
+		if (!this.mapDiv) {
+			return;
+		}
+		["vector-legend", "vector-timeline", "vector-wind-marker"].forEach((cls) => {
+			const old = this.mapDiv.querySelector(`.${cls}`);
+			if (old) {
+				old.remove();
+			}
+		});
 		if (this.config.showLegend) {
-			mapDiv.appendChild(this.legendDiv());
+			this.mapDiv.appendChild(this.legendDiv());
 		}
 
 		if (this.isWindView()) {
-			// Location callout: a plain overlay sibling above the map
-			// canvas. Streaks render inside the GL stack beneath the
-			// home marker, so nothing paints over either. Repositioned
-			// from the map on every move via positionWindCallout().
-			const callout = document.createElement("div");
-			callout.className = "vector-wind-marker";
-			const badge = document.createElement("div");
-			badge.className = "vector-wind-badge";
-			callout.appendChild(badge);
-			mapDiv.appendChild(callout);
-			this.windCallout = callout;
-			this.windBadge = badge;
-			this.updateWindBadge();
+			this.mapDiv.appendChild(this.buildCallout());
 		} else {
 			this.windCallout = null;
 			this.windBadge = null;
 		}
 
 		if (this.config.showTimeline) {
-			mapDiv.appendChild(this.timelineDiv());
+			this.mapDiv.appendChild(this.timelineDiv());
 		}
-		wrapper.appendChild(this.attributionDiv());
+	},
 
-		// Map lifecycle lives here, not in the DOM builder below: every
-		// updateDom replaces the container, so drop the old map and init
-		// after insert, when the new container has dimensions.
-		setTimeout(() => this.renderMapView(mapDiv), 0);
-
-		return wrapper;
+	/* Location callout: a plain overlay sibling above the map canvas.
+	 * Streaks render inside the GL stack beneath the home marker, so
+	 * nothing paints over either. Repositioned from the map on every
+	 * move via positionWindCallout(). */
+	buildCallout: function () {
+		const callout = document.createElement("div");
+		callout.className = "vector-wind-marker";
+		const badge = document.createElement("div");
+		badge.className = "vector-wind-badge";
+		callout.appendChild(badge);
+		this.windCallout = callout;
+		this.windBadge = badge;
+		this.updateWindBadge();
+		return callout;
 	},
 
 	renderMapView: function (mapDiv) {
@@ -527,6 +669,10 @@ Module.register("MMM-WeatherMap", {
 				return;
 			}
 			this.mapReady = true;
+			// Callout tracking lives for the map's whole life (the
+			// callout node itself comes and goes per view).
+			this.map.on("move", () => this.positionWindCallout());
+			this.map.on("resize", () => this.positionWindCallout());
 			if (!this.isWindView()) {
 				this.addRadarLayer();
 			}
@@ -535,8 +681,6 @@ Module.register("MMM-WeatherMap", {
 			this.restartAnimation();
 			if (this.isWindView()) {
 				this.positionWindCallout();
-				this.map.on("move", () => this.positionWindCallout());
-				this.map.on("resize", () => this.positionWindCallout());
 				this.ensureParticleLayer();
 			}
 		});
@@ -561,6 +705,8 @@ Module.register("MMM-WeatherMap", {
 					button.textContent = icons[view] || view;
 					button.addEventListener("click", () => module.setView(view));
 					container.appendChild(button);
+					module.viewButtons = module.viewButtons || {};
+					module.viewButtons[view] = button;
 				});
 				return container;
 			},
@@ -821,7 +967,12 @@ Module.register("MMM-WeatherMap", {
 				id,
 				type: "raster",
 				source: id,
-				paint: { "raster-opacity": i === this.frameIndex ? this.config.radarOpacity : 0 }
+				paint: {
+					"raster-opacity": i === this.frameIndex ? this.config.radarOpacity : 0,
+					// View-swap fades (and frame crossfades) glide
+					// through this transition instead of popping.
+					"raster-opacity-transition": { duration: 350, delay: 0 }
+				}
 			});
 		});
 	},
@@ -1393,8 +1544,8 @@ Module.register("MMM-WeatherMap", {
 			"attribute vec2 a_pos; attribute vec2 a_uv; varying vec2 v_uv;" +
 			"void main() { gl_Position = vec4(a_pos, 0.0, 1.0); v_uv = a_uv; }");
 		const frag = this.compileParticleShader(gl, gl.FRAGMENT_SHADER,
-			"precision mediump float; varying vec2 v_uv; uniform sampler2D u_tex;" +
-			"void main() { gl_FragColor = texture2D(u_tex, v_uv); }");
+			"precision mediump float; varying vec2 v_uv; uniform sampler2D u_tex; uniform float u_fade;" +
+			"void main() { gl_FragColor = texture2D(u_tex, v_uv) * u_fade; }");
 		if (!vert || !frag) {
 			return null;
 		}
@@ -1415,7 +1566,8 @@ Module.register("MMM-WeatherMap", {
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-		return { canvas, ctx, program, texture, buffer, width: 0, height: 0, cssWidth: 0, cssHeight: 0, dpr: 1 };
+		const fadeLoc = gl.getUniformLocation(program, "u_fade");
+		return { canvas, ctx, program, texture, buffer, fadeLoc, width: 0, height: 0, cssWidth: 0, cssHeight: 0, dpr: 1 };
 	},
 
 	renderParticleLayer: function (gl) {
@@ -1438,6 +1590,7 @@ Module.register("MMM-WeatherMap", {
 			state.ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
 		}
 		this.advectParticles(state.ctx, state.cssWidth, state.cssHeight, true);
+		this.particleFade = this.stepFade(this.particleFade, this.particleFadeTarget);
 		gl.viewport(0, 0, state.width, state.height);
 		gl.disable(gl.DEPTH_TEST);
 		gl.enable(gl.BLEND);
@@ -1455,6 +1608,7 @@ Module.register("MMM-WeatherMap", {
 		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, state.canvas);
 		gl.uniform1i(gl.getUniformLocation(state.program, "u_tex"), 0);
+		gl.uniform1f(state.fadeLoc, this.particleFade);
 		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 		gl.disableVertexAttribArray(pos);
 		gl.disableVertexAttribArray(uv);
@@ -1482,6 +1636,9 @@ Module.register("MMM-WeatherMap", {
 		if (this.map.getLayer && this.map.getLayer("wind-particles")) {
 			return;
 		}
+		// Fresh entries glide in from transparent.
+		this.particleFade = 0;
+		this.particleFadeTarget = 1;
 		const size = this.map.getCanvas();
 		const cssWidth = (size && size.clientWidth) || 420;
 		const cssHeight = (size && size.clientHeight) || 420;

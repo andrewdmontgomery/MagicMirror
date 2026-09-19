@@ -1098,6 +1098,88 @@ describe("particle GL layer", () => {
 	});
 });
 
+describe("view crossfade", () => {
+	function layerMapStub(ids = []) {
+		const calls = { paint: [], layout: [] };
+		return {
+			calls,
+			getLayer: (id) => (ids.includes(id) ? {} : undefined),
+			setPaintProperty: (id, prop, value) => calls.paint.push([id, prop, value]),
+			setLayoutProperty: (id, prop, value) => calls.layout.push([id, prop, value])
+		};
+	}
+
+	it("steps fades toward the target without overshoot", () => {
+		assert.ok(Math.abs(def.stepFade.call(ctx(), 0.5, 1) - 0.55) < 1e-9);
+		assert.ok(Math.abs(def.stepFade.call(ctx(), 0.5, 0) - 0.45) < 1e-9);
+		assert.equal(def.stepFade.call(ctx(), 0.99, 1), 1);
+		assert.equal(def.stepFade.call(ctx(), 0.01, 0), 0);
+		assert.equal(def.stepFade.call(ctx(), 1, 1), 1);
+	});
+
+	it("fades existing radar layers to a target opacity", () => {
+		const map = layerMapStub(["rainviewer-0", "rainviewer-1"]);
+		const frames = [{ time: 1 }, { time: 2 }];
+		def.fadeRadarTo.call(ctx({ map, frames: { frames } }), 0);
+		assert.deepEqual(map.calls.paint, [
+			["rainviewer-0", "raster-opacity", 0],
+			["rainviewer-1", "raster-opacity", 0]
+		]);
+	});
+
+	it("toggles radar visibility per view", () => {
+		const map = layerMapStub(["rainviewer-0"]);
+		const c = ctx({ map, frames: { frames: [{ time: 1 }] } });
+		def.setRadarLayersVisible.call(c, false);
+		def.setRadarLayersVisible.call(c, true);
+		assert.deepEqual(map.calls.layout, [
+			["rainviewer-0", "visibility", "none"],
+			["rainviewer-0", "visibility", "visible"]
+		]);
+	});
+
+	it("removes particles only once out of wind view", () => {
+		const removed = [];
+		const windy = ctx({ view: "wind" });
+		windy.removeParticleLayer = () => removed.push(true);
+		def.maybeRemoveParticles.call(windy);
+		assert.deepEqual(removed, []);
+		const calm = ctx({ view: "precip" });
+		calm.removeParticleLayer = () => removed.push(true);
+		def.maybeRemoveParticles.call(calm);
+		assert.deepEqual(removed, [true]);
+	});
+
+	it("hides radar only outside precip view", () => {
+		const hidden = [];
+		const calm = ctx({ view: "precip" });
+		calm.setRadarLayersVisible = () => hidden.push(true);
+		def.maybeHideRadar.call(calm);
+		assert.deepEqual(hidden, []);
+		const windy = ctx({ view: "wind" });
+		windy.setRadarLayersVisible = () => hidden.push(true);
+		def.maybeHideRadar.call(windy);
+		assert.deepEqual(hidden, [true]);
+	});
+
+	it("syncs toggle buttons to the active view", () => {
+		const made = [];
+		const buttons = {
+			precip: { className: "", setAttribute: (k, v) => made.push(["precip", k, v]) },
+			wind: { className: "", setAttribute: (k, v) => made.push(["wind", k, v]) }
+		};
+		const c = ctx({ view: "wind", viewButtons: buttons });
+		def.updateViewButtons.call(c);
+		assert.equal(buttons.wind.className, "vector-view vector-view-active");
+		assert.equal(buttons.precip.className, "vector-view");
+		assert.deepEqual(made, [
+			["precip", "aria-pressed", "false"],
+			["wind", "aria-pressed", "true"]
+		]);
+		def.updateViewButtons.call(ctx({}));
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];
