@@ -51,10 +51,11 @@
 	white-space: nowrap;
 }
 
-/* Wind legend: numeric speed ticks over a pale-to-deep blue gradient
- * (0 at the bottom, max at the top) — the macOS Weather wind-map effect. */
+/* Wind legend: numeric speed ticks over a deep-blue-to-white gradient
+ * (0 dark at the bottom, max white at the top) — faster reads whiter,
+ * matching the macOS Weather wind-map scale. */
 .vector-legend-bar-wind {
-	background: linear-gradient(to top, #e8f6fd 0%, #7fd4f2 55%, #0a7abf 100%);
+	background: linear-gradient(to top, #0a7abf 0%, #7fd4f2 55%, #e8f6fd 100%);
 }
 
 /* Wind location callout: a small circle (compass point over speed +
@@ -113,9 +114,11 @@
 	pointer-events: none;
 }
 
-/* Manual view toggle: dark pill group matching the reset control. */
+/* Manual view toggle: vertical dark pill stack (room for future
+ * views below wind), matching the reset control. */
 .vector-view-wrap {
 	display: flex;
+	flex-direction: column;
 	background: rgba(0, 0, 0, 0.55);
 	-webkit-backdrop-filter: blur(10px);
 	backdrop-filter: blur(10px);
