@@ -65,6 +65,8 @@ Module.register("MMM-WeatherMap", {
 		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
 		this.wind = null;
 		this.windIndex = 0;
+		this.windMarker = null;
+		this.windBadge = null;
 		this.particles = [];
 		this.particleRaf = null;
 		this.particleCanvas = null;
@@ -310,7 +312,6 @@ Module.register("MMM-WeatherMap", {
 		}
 
 		if (this.isWindView()) {
-			mapDiv.appendChild(this.windBadgeDiv());
 			const particles = document.createElement("canvas");
 			particles.className = "vector-particles";
 			mapDiv.appendChild(particles);
@@ -334,6 +335,8 @@ Module.register("MMM-WeatherMap", {
 
 	renderMapView: function (mapDiv) {
 		this.stopParticles();
+		this.windMarker = null;
+		this.windBadge = null;
 		if (this.map) {
 			this.map.remove();
 			this.map = null;
@@ -371,6 +374,7 @@ Module.register("MMM-WeatherMap", {
 			this.applyPosition();
 			this.restartAnimation();
 			if (this.isWindView()) {
+				this.addWindMarker();
 				this.startParticles();
 			}
 		});
@@ -470,14 +474,30 @@ Module.register("MMM-WeatherMap", {
 		return legend;
 	},
 
-	/* Apple-style center badge: compass abbreviation over the current
-	 * wind speed, like the ESE / 10 MPH circle on the macOS wind map. */
-	windBadgeDiv: function () {
+	/* Apple-style location callout: a small circle with the compass
+	 * abbreviation over the current wind speed, pinned to the home
+	 * marker with a tail pointer — like the ESE / 11 MPH callout on
+	 * the macOS wind map. A real MapLibre Marker (not an overlay div)
+	 * so it tracks pan and zoom exactly. */
+	addWindMarker: function () {
+		if (!this.map || this.windMarker) {
+			return;
+		}
+		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
+		const home = markers[0] || { lat: this.config.lat, lng: this.config.lon };
+		const element = document.createElement("div");
+		element.className = "vector-wind-marker";
 		const badge = document.createElement("div");
 		badge.className = "vector-wind-badge";
+		element.appendChild(badge);
+		const tail = document.createElement("div");
+		tail.className = "vector-wind-tail";
+		element.appendChild(tail);
 		this.windBadge = badge;
 		this.updateWindBadge();
-		return badge;
+		this.windMarker = new this.maplibre.Marker({ element, anchor: "bottom", offset: [0, -4] })
+			.setLngLat([home.lng !== undefined ? home.lng : this.config.lon, home.lat !== undefined ? home.lat : this.config.lat])
+			.addTo(this.map);
 	},
 
 	updateWindBadge: function () {
