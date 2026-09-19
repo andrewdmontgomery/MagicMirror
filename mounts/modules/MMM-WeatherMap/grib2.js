@@ -127,4 +127,118 @@ function unpackSimple(message, maxValues = Infinity) {
 	return values;
 }
 
-module.exports = { readMessage, gridDimensions, productInfo, simplePacking, unpackSimple, signedMagnitude };
+/* Lambert conformal parameters parsed from section 3 (template 30,
+ * the HRRR conus grid). Degrees for angles, meters for Dx/Dy, radius
+ * from the shape-of-earth code (6 = spherical 6,371,229 m). */
+function lambertParams(message) {
+	const section = message.sections.get(3);
+	if (!section) {
+		throw new Error("grib2: message has no section 3 (grid definition)");
+	}
+	const template = section.readUInt16BE(12);
+	if (template !== 30) {
+		throw new Error(`grib2: unsupported grid template ${template} (only Lambert 30)`);
+	}
+	if (section[14] !== 6) {
+		throw new Error(`grib2: unsupported earth shape ${section[14]} (only spherical 6)`);
+	}
+	const microdegrees = 1e-6;
+	return {
+		nx: section.readUInt32BE(30),
+		ny: section.readUInt32BE(34),
+		// Template 3.30 stores Dx/Dy in millimetres (raw 3000000 for
+		// the 3 km HRRR grid) — meters here, matching wgrib2.
+		dx: section.readUInt32BE(55) / 1000,
+		dy: section.readUInt32BE(59) / 1000,
+		latin1: section.readInt32BE(65) * microdegrees,
+		latin2: section.readInt32BE(69) * microdegrees,
+		latOrigin: section.readInt32BE(47) * microdegrees,
+		lonOrigin: section.readInt32BE(51) * microdegrees,
+		firstLat: section.readInt32BE(38) * microdegrees,
+		firstLon: section.readInt32BE(42) * microdegrees,
+		radius: 6371229
+	};
+}
+
+/* Snyder cone constants plus the first grid point's plane position,
+ * so grid indices measure straight from the message origin. */
+function coneConstants(params) {
+	const radians = Math.PI / 180;
+	const parallel1 = params.latin1 * radians;
+	const parallel2 = params.latin2 * radians;
+	let n;
+	if (Math.abs(parallel1 - parallel2) < 1e-10) {
+		n = Math.sin(parallel1);
+	} else {
+		n =
+			Math.log(Math.cos(parallel1) / Math.cos(parallel2)) /
+			Math.log(Math.tan(Math.PI / 4 + parallel2 / 2) / Math.tan(Math.PI / 4 + parallel1 / 2));
+	}
+	const f = (Math.cos(parallel1) * Math.pow(Math.tan(Math.PI / 4 + parallel1 / 2), n)) / n;
+	const rhoOrigin =
+		(params.radius * f) / Math.pow(Math.tan(Math.PI / 4 + (params.latOrigin * radians) / 2), n);
+	const rhoFirst =
+		(params.radius * f) /
+		Math.pow(Math.tan(Math.PI / 4 + (params.firstLat * radians) / 2), n);
+	const thetaFirst = n * (params.firstLon - params.lonOrigin) * radians;
+	return {
+		n,
+		f,
+		rhoOrigin,
+		xOrigin: rhoFirst * Math.sin(thetaFirst),
+		yOrigin: rhoOrigin - rhoFirst * Math.cos(thetaFirst)
+	};
+}
+
+function norm360(lon) {
+	return ((lon % 360) + 360) % 360;
+}
+
+function norm180(lon) {
+	return ((lon + 540) % 360) - 180;
+}
+
+/* Lat/lon to storage indices (fractional — ready for bilinear
+ * interpolation). Storage row 0 is the NORTHERNMOST row, columns run
+ * west-to-east. Out-of-grid points return out-of-range indices
+ * without throwing; callers clamp or reject. */
+function latLonToGrid(message, lat, lon) {
+	const params = lambertParams(message);
+	const cone = coneConstants(params);
+	const radians = Math.PI / 180;
+	const rho =
+		(params.radius * cone.f) / Math.pow(Math.tan(Math.PI / 4 + (lat * radians) / 2), cone.n);
+	const theta = cone.n * (norm360(lon) - params.lonOrigin) * radians;
+	const x = rho * Math.sin(theta);
+	const y = cone.rhoOrigin - rho * Math.cos(theta);
+	const col = (x - cone.xOrigin) / params.dx;
+	const northward = (y - cone.yOrigin) / params.dy;
+	return { row: params.ny - 1 - northward, col };
+}
+
+/* Storage indices back to lat/lon (lon normalized to [-180, 180]). */
+function gridToLatLon(message, row, col) {
+	const params = lambertParams(message);
+	const cone = coneConstants(params);
+	const radians = Math.PI / 180;
+	const northward = params.ny - 1 - row;
+	const x = cone.xOrigin + col * params.dx;
+	const y = cone.yOrigin + northward * params.dy;
+	const rho = Math.sign(cone.n) * Math.hypot(x, cone.rhoOrigin - y);
+	const theta = Math.atan2(x, cone.rhoOrigin - y);
+	const lat = (2 * Math.atan(Math.pow((params.radius * cone.f) / rho, 1 / cone.n)) - Math.PI / 2) / radians;
+	const lon = norm180(params.lonOrigin + theta / cone.n / radians);
+	return { lat, lon };
+}
+
+module.exports = {
+	readMessage,
+	gridDimensions,
+	productInfo,
+	simplePacking,
+	unpackSimple,
+	signedMagnitude,
+	lambertParams,
+	latLonToGrid,
+	gridToLatLon
+};
