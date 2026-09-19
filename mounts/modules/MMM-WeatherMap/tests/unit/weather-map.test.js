@@ -241,9 +241,9 @@ describe("windDriftVector", () => {
 			const v = def.windDriftVector.call(ctx(), 180, speed, 75);
 			return Math.hypot(v.dx, v.dy);
 		};
-		assert.ok(Math.abs(mag(0) - 0.2) < 1e-9);
+		assert.ok(Math.abs(mag(0) - 0.1) < 1e-9);
 		assert.ok(Math.abs(mag(75) - 1.6) < 1e-9);
-		assert.ok(Math.abs(mag(37.5) - 0.9) < 1e-9);
+		assert.ok(Math.abs(mag(37.5) - 0.85) < 1e-9);
 	});
 
 	it("grows tails in proportion over frames", () => {
@@ -858,8 +858,8 @@ describe("field sampling", () => {
 		c.matchHourly = (t) => def.matchHourly.call(c, t);
 		c.currentWindWindow = () => [];
 		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
-		// 10 m/s eastward = 22.37 mph: 0.2 + (22.37/75) * 1.4 px/frame.
-		const step = (0.2 + ((10 * 2.23694) / 75) * 1.4) / 10;
+		// 10 m/s eastward = 22.37 mph: 0.1 + (22.37/75) * 1.5 px/frame.
+		const step = (0.1 + ((10 * 2.23694) / 75) * 1.5) / 10;
 		assert.ok(Math.abs(particles[0].lon - (1 + step)) < 1e-9, `lon ${particles[0].lon}`);
 		assert.ok(Math.abs(particles[0].lat - 2) < 1e-9, `lat ${particles[0].lat}`);
 		// The head stroke wears the legend color for 22.37/75 mph.
