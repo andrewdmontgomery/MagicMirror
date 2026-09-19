@@ -327,24 +327,21 @@ module.exports = NodeHelper.create({
 						const components =
 							spec === zero ? zeroComponents : await this.fetchHourComponents(spec);
 						return this.resampleHour(components, window.originRow, window.originCol, this.validTime(spec));
-					})().catch((error) => {
-						console.error(
-							"MMM-WeatherMap: skipping wind hour",
-							`${spec.date}t${spec.hour}z f${String(spec.forecastHour).padStart(2, "0")}`,
-							error.message || error
-						);
-						return null;
-					})
+					})().catch((error) => ({ skipped: spec, reason: error.message || error }))
 				)
 			);
-			const fields = frames.filter(Boolean).sort((a, b) => (a.time < b.time ? -1 : 1));
+			const fields = frames.filter((frame) => !frame.skipped).sort((a, b) => (a.time < b.time ? -1 : 1));
+			const skipped = frames.filter((frame) => frame.skipped);
 			if (fields.length === 0) {
 				throw new Error("MMM-WeatherMap: no wind hours served");
 			}
 			const home = this.homeSample(fields, lat, lon);
 			console.log(
-				`MMM-WeatherMap: wind timeline ${fields.length} hourly fields, ` +
-				`home ${home.speed.toFixed(1)} m/s from ${home.direction}° at ${home.time}`
+				`MMM-WeatherMap: wind timeline ${fields.length}/${specs.length} hourly fields, ` +
+				`home ${home.speed.toFixed(1)} m/s from ${home.direction}° at ${home.time}` +
+				(skipped.length > 0
+					? ` (skipped ${skipped.map((s) => `f${String(s.skipped.forecastHour).padStart(2, "0")}`).join(",")}: ${skipped[0].reason})`
+					: "")
 			);
 			this.sendSocketNotification("WIND_FIELDS_RESULT", { fields });
 		} catch (error) {
