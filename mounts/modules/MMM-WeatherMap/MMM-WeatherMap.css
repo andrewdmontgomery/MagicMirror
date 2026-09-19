@@ -51,11 +51,12 @@
 	white-space: nowrap;
 }
 
-/* Wind legend: numeric speed ticks over a deep-blue-to-white gradient
- * (0 dark at the bottom, max white at the top) — faster reads whiter,
- * matching the macOS Weather wind-map scale. */
+/* Wind legend: numeric speed ticks over a sky-to-white gradient
+ * (0 at the bottom, max white at the top) — faster reads whiter,
+ * matching the macOS Weather wind-map scale. The bottom anchors at
+ * the old 25 mph blue so calm air never reads navy. */
 .vector-legend-bar-wind {
-	background: linear-gradient(to top, #0a7abf 0%, #7fd4f2 55%, #e8f6fd 100%);
+	background: linear-gradient(to top, rgb(81, 177, 222) 0%, #7fd4f2 55%, #e8f6fd 100%);
 }
 
 /* Wind location callout: a small circle (compass point over speed +

@@ -20,9 +20,11 @@ const VIEWS = ["precip", "wind"];
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
 /* Legend stops (ratio → RGB), mirroring .vector-legend-bar-wind in
- * MMM-WeatherMap.css — faster reads whiter. Keep the two in sync. */
+ * MMM-WeatherMap.css — faster reads whiter. The bottom stop is the
+ * blue that used to sit at ~25 mph, so calm air reads sky, not navy.
+ * Keep the two in sync. */
 const WIND_COLOR_STOPS = [
-	[0, [10, 122, 191]],
+	[0, [81, 177, 222]],
 	[0.55, [127, 212, 242]],
 	[1, [232, 246, 253]]
 ];

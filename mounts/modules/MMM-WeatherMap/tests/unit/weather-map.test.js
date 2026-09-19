@@ -955,15 +955,15 @@ describe("timeline track", () => {
 
 describe("legend colors", () => {
 	it("maps ratio endpoints to the legend stops", () => {
-		assert.deepEqual(def.windColor.call(ctx(), 0), [10, 122, 191]);
+		assert.deepEqual(def.windColor.call(ctx(), 0), [81, 177, 222]);
 		assert.deepEqual(def.windColor.call(ctx(), 0.55), [127, 212, 242]);
 		assert.deepEqual(def.windColor.call(ctx(), 1), [232, 246, 253]);
 	});
 
 	it("blends within segments and clamps outside", () => {
-		assert.deepEqual(def.windColor.call(ctx(), 0.275), [69, 167, 217]);
+		assert.deepEqual(def.windColor.call(ctx(), 0.275), [104, 195, 232]);
 		assert.deepEqual(def.windColor.call(ctx(), 99), [232, 246, 253]);
-		assert.deepEqual(def.windColor.call(ctx(), -2), [10, 122, 191]);
+		assert.deepEqual(def.windColor.call(ctx(), -2), [81, 177, 222]);
 	});
 
 	it("ratios speed against the legend max", () => {
@@ -976,7 +976,7 @@ describe("legend colors", () => {
 		const { calls, ctx2d, map } = trailStub();
 		const c = particleCtx(map, []);
 		def.strokeTrail.call(c, ctx2d, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 1, 0);
-		assert.deepEqual(calls.stops, [[0, "rgba(10, 122, 191, 0)"], [1, "rgba(10, 122, 191, 0.6)"]]);
+		assert.deepEqual(calls.stops, [[0, "rgba(81, 177, 222, 0)"], [1, "rgba(81, 177, 222, 0.6)"]]);
 	});
 
 	it("carries drift ratio into ghost trails", () => {
