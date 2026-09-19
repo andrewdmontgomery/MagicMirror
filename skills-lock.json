@@ -6,6 +6,12 @@
       "sourceType": "github",
       "skillPath": "skills/git-workflow-and-versioning/SKILL.md",
       "computedHash": "e8e0d1cc98c0a6b81d2979442ae92addae32cd5194fb5c4eac4ac5228b408770"
+    },
+    "nodejs-expert": {
+      "source": "oimiragieo/agent-studio",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/nodejs-expert/SKILL.md",
+      "computedHash": "c43e067dd0b9edf430a02eeeba6c01ae95fc4a0a30d44403a3b0783b6f6cf66a"
     }
   }
 }
