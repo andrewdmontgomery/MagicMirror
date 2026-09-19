@@ -7,6 +7,18 @@
       "skillPath": "skills/git-workflow-and-versioning/SKILL.md",
       "computedHash": "e8e0d1cc98c0a6b81d2979442ae92addae32cd5194fb5c4eac4ac5228b408770"
     },
+    "modern-javascript-patterns": {
+      "source": "wshobson/agents",
+      "sourceType": "github",
+      "skillPath": "plugins/javascript-typescript/skills/modern-javascript-patterns/SKILL.md",
+      "computedHash": "ef81ef5b5b70287b3962dd0fce50c90b27c636e940ec4e80f9a0b216587be549"
+    },
+    "node-testing": {
+      "source": "paldom/node-skills",
+      "sourceType": "github",
+      "skillPath": "skills/node-testing/SKILL.md",
+      "computedHash": "72762f676b0fef0a5a4536ffae828e2f0f63d9edb4d672adb48e649954cf96f8"
+    },
     "nodejs-expert": {
       "source": "oimiragieo/agent-studio",
       "sourceType": "github",
