@@ -1520,24 +1520,14 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
-	/* Width setter with loop-wrap snap: a large BACKWARD jump means
-	 * the animation looped, so the fill jumps instead of gliding
-	 * back left through the transition (small backward moves, like
-	 * manual scrubs, still glide). */
+	/* Width setter, single point of contact for the fill. Every move
+	 * is instant — smoothness comes from the 100ms glide ticker,
+	 * so pause freezes dead and wraps/loops jump cleanly. */
 	setProgressWidth: function (percent) {
 		if (!this.timelineProgress) {
 			return;
 		}
-		const bar = this.timelineProgress;
-		const current = parseFloat(bar.style.width) || 0;
-		if (percent < current - 50) {
-			bar.style.transition = "none";
-			bar.style.width = `${percent}%`;
-			void bar.offsetWidth;
-			bar.style.transition = "";
-		} else {
-			bar.style.width = `${percent}%`;
-		}
+		this.timelineProgress.style.width = `${percent}%`;
 	},
 
 	/* Uniform-flow particle overlay: ~250 white streaks advected along

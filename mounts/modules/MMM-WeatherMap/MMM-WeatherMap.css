@@ -217,7 +217,9 @@
 	width: 0;
 	border-radius: 3px;
 	background: #fff;
-	transition: width 0.6s linear;
+	/* No CSS transition: the 100ms glide ticker interpolates
+	 * smoothly on its own. A transition here would overrun pause
+	 * by 0.6s and replay a grow-from-zero on every rebuild. */
 }
 
 .vector-tl-tick {

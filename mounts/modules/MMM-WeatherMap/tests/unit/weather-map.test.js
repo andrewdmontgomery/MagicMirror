@@ -991,20 +991,12 @@ describe("wind slots", () => {
 		assert.equal(def.formatDateLabel.call(ctx(), noon), "Monday, June 1, 2026");
 	});
 
-	it("snaps loop wraps instead of gliding back", () => {
-		const c = ctx({ timelineProgress: { style: {}, offsetWidth: 0 } });
-		c.timelineProgress.style.width = "100%";
+	it("sets fill width directly with no transition games", () => {
+		const c = ctx({ timelineProgress: { style: {} } });
+		def.setProgressWidth.call(c, 42.5);
+		assert.equal(c.timelineProgress.style.width, "42.5%");
 		def.setProgressWidth.call(c, 0);
 		assert.equal(c.timelineProgress.style.width, "0%");
-		assert.equal(c.timelineProgress.style.transition, "");
-	});
-
-	it("glides small moves including manual scrubs", () => {
-		const c = ctx({ timelineProgress: { style: {}, offsetWidth: 0 } });
-		c.timelineProgress.style.width = "80%";
-		def.setProgressWidth.call(c, 30);
-		assert.equal(c.timelineProgress.style.width, "30%");
-		assert.ok(c.timelineProgress.style.transition !== "none");
 		def.setProgressWidth.call(ctx({ timelineProgress: null }), 50);
 	});
 
