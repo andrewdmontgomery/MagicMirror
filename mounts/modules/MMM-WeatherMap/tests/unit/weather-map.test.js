@@ -435,16 +435,18 @@ function particleCtx(map, particles) {
 		ghosts: [],
 		windIndex: 0,
 		config: { units: "imperial" },
-		currentWindSlot: () => ({ direction: 0, speed: 75 }),
-		windLegendScale: def.windLegendScale,
-		windDriftVector: def.windDriftVector,
+			currentWindSlot: () => ({ direction: 0, speed: 75 }),
+			windLegendScale: def.windLegendScale,
+			windDriftVector: def.windDriftVector,
+			windColor: def.windColor,
+			speedRatio: def.speedRatio,
 		// Fixed uniform slot: preserves the pre-slots fallback drift
 		// (75 from north) so the trail-geometry tests are unaffected
 		// by the slots refactor.
 		windSlots: () => [{ time: 0, fieldIndex: -1, isNow: true, speed: 75, direction: 0 }],
 		spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
 		ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
-		strokeTrail: function (c2d, p, a) { return def.strokeTrail.call(this, c2d, p, a); }
+			strokeTrail: function (...args) { return def.strokeTrail.call(this, ...args); }
 	};
 }
 
@@ -492,7 +494,8 @@ describe("history-trail particles", () => {
 		const c = particleCtx(map, [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }]);
 		withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400));
 		assert.deepEqual(calls.gradients, [[10, 20, 10, 21.6]]);
-		assert.deepEqual(calls.stops, [[0, "rgba(255, 255, 255, 0)"], [1, "rgba(255, 255, 255, 0.6)"]]);
+		// Full-ratio trail wears the top legend stop, not pure white.
+		assert.deepEqual(calls.stops, [[0, "rgba(232, 246, 253, 0)"], [1, "rgba(232, 246, 253, 0.6)"]]);
 		assert.deepEqual(calls.moveTo, [[10, 20]]);
 		assert.ok(Math.abs(calls.lineTo[0][0] - 10) < 1e-9);
 		assert.ok(Math.abs(calls.lineTo[0][1] - 21.6) < 1e-9);
@@ -664,6 +667,7 @@ describe("field sampling", () => {
 		assert.ok(drift.dx > 0, `dx ${drift.dx}`);
 		assert.ok(Math.abs(drift.dy) < 1e-9, `dy ${drift.dy}`);
 		assert.ok(Math.abs(drift.dx - expected.dx) < 1e-9);
+		assert.ok(Math.abs(drift.ratio - (10 * 2.23694) / 75) < 1e-9, `ratio ${drift.ratio}`);
 	});
 
 	function hourlyAroundNow() {
@@ -742,7 +746,7 @@ describe("field sampling", () => {
 	});
 
 	it("advects particles along the slotted field, not the fallback", () => {
-		const { ctx2d, map } = trailStub();
+		const { calls, ctx2d, map } = trailStub();
 		const field = { time: new Date(Date.now()).toISOString(), nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
 		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }];
 		const c = particleCtx(map, particles);
@@ -760,6 +764,9 @@ describe("field sampling", () => {
 		const step = (0.2 + ((10 * 2.23694) / 75) * 1.4) / 10;
 		assert.ok(Math.abs(particles[0].lon - (1 + step)) < 1e-9, `lon ${particles[0].lon}`);
 		assert.ok(Math.abs(particles[0].lat - 2) < 1e-9, `lat ${particles[0].lat}`);
+		// The head stroke wears the legend color for 22.37/75 mph.
+		const [r, g, b] = def.windColor.call(c, (10 * 2.23694) / 75);
+		assert.ok(calls.stops.some(([, color]) => color === `rgba(${r}, ${g}, ${b}, 0.6)`));
 	});
 });
 
@@ -943,6 +950,41 @@ describe("timeline track", () => {
 		assert.ok(labels[4].isNow);
 		assert.equal(labels[0].label, def.formatFrameTime.call(c, 1000));
 		assert.deepEqual([labels[1].label, labels[2].label, labels[3].label], [null, null, null]);
+	});
+});
+
+describe("legend colors", () => {
+	it("maps ratio endpoints to the legend stops", () => {
+		assert.deepEqual(def.windColor.call(ctx(), 0), [10, 122, 191]);
+		assert.deepEqual(def.windColor.call(ctx(), 0.55), [127, 212, 242]);
+		assert.deepEqual(def.windColor.call(ctx(), 1), [232, 246, 253]);
+	});
+
+	it("blends within segments and clamps outside", () => {
+		assert.deepEqual(def.windColor.call(ctx(), 0.275), [69, 167, 217]);
+		assert.deepEqual(def.windColor.call(ctx(), 99), [232, 246, 253]);
+		assert.deepEqual(def.windColor.call(ctx(), -2), [10, 122, 191]);
+	});
+
+	it("ratios speed against the legend max", () => {
+		assert.equal(def.speedRatio.call(ctx(), 37.5, 75), 0.5);
+		assert.equal(def.speedRatio.call(ctx(), 999, 75), 1);
+		assert.equal(def.speedRatio.call(ctx(), null, 75), 0);
+	});
+
+	it("paints trails in their speed color", () => {
+		const { calls, ctx2d, map } = trailStub();
+		const c = particleCtx(map, []);
+		def.strokeTrail.call(c, ctx2d, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 1, 0);
+		assert.deepEqual(calls.stops, [[0, "rgba(10, 122, 191, 0)"], [1, "rgba(10, 122, 191, 0.6)"]]);
+	});
+
+	it("carries drift ratio into ghost trails", () => {
+		const { map } = trailStub();
+		const c = particleCtx(map, []);
+		c.ghosts = [];
+		def.ghostTrail.call(c, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 0.25);
+		assert.equal(c.ghosts[0].ratio, 0.25);
 	});
 });
 

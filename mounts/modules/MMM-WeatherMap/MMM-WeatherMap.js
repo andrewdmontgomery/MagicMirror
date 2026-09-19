@@ -19,6 +19,13 @@ const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
+/* Legend stops (ratio → RGB), mirroring .vector-legend-bar-wind in
+ * MMM-WeatherMap.css — faster reads whiter. Keep the two in sync. */
+const WIND_COLOR_STOPS = [
+	[0, [10, 122, 191]],
+	[0.55, [127, 212, 242]],
+	[1, [232, 246, 253]]
+];
 /* Field components arrive in m/s; the drift scale runs in legend units. */
 const MS_TO_MPH = 2.23694;
 const MS_TO_KMH = 3.6;
@@ -284,6 +291,30 @@ Module.register("MMM-WeatherMap", {
 			dx: Math.sin(radians) * magnitude,
 			dy: -Math.cos(radians) * magnitude
 		};
+	},
+
+	/* Speed color through the legend stops: 0 = deep blue, 1 =
+	 * near-white. Pure — tested. */
+	windColor: function (ratio) {
+		const t = Math.min(Math.max(ratio || 0, 0), 1);
+		let lower = WIND_COLOR_STOPS[0];
+		let upper = WIND_COLOR_STOPS[WIND_COLOR_STOPS.length - 1];
+		for (let i = 1; i < WIND_COLOR_STOPS.length; i += 1) {
+			if (t <= WIND_COLOR_STOPS[i][0]) {
+				lower = WIND_COLOR_STOPS[i - 1];
+				upper = WIND_COLOR_STOPS[i];
+				break;
+			}
+		}
+		const span = upper[0] - lower[0] || 1;
+		const mix = (t - lower[0]) / span;
+		return [0, 1, 2].map((channel) => Math.round(lower[1][channel] + (upper[1][channel] - lower[1][channel]) * mix));
+	},
+
+	/* 0..1 speed ratio against the legend max (unknown speeds read
+	 * calm-blue). Pure — tested. */
+	speedRatio: function (speed, max) {
+		return Math.min(Math.max((speed || 0) / (max || 75), 0), 1);
 	},
 
 	/* 16-point compass abbreviation for the center badge. Pure. */
@@ -1341,6 +1372,7 @@ Module.register("MMM-WeatherMap", {
 		// Uniform slot vector when no gridded field covers the scrubbed
 		// hour; otherwise each particle samples its own hour's field.
 		const fallback = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
+		fallback.ratio = this.speedRatio(slot && slot.speed, scale.max);
 		// Full clear, never a translucent fade: the map underneath
 		// returns to its exact base color every frame. No residue.
 		ctx2d.clearRect(0, 0, width, height);
@@ -1360,6 +1392,7 @@ Module.register("MMM-WeatherMap", {
 						drift = sampled;
 					}
 				}
+				p.ratio = drift.ratio;
 				const screen = this.map.project([p.lon, p.lat]);
 				const next = this.map.unproject([screen.x + drift.dx, screen.y + drift.dy]);
 				p.lon = next.lng;
@@ -1371,7 +1404,7 @@ Module.register("MMM-WeatherMap", {
 				p.age += 1;
 				const head = this.map.project([p.lon, p.lat]);
 				if (p.age > p.maxAge || head.x < 0 || head.x > width || head.y < 0 || head.y > height || Math.random() < 0.004) {
-					this.ghostTrail(p);
+					this.ghostTrail(p, p.ratio);
 					const fresh = this.spawnParticle(width, height);
 					p.lon = fresh.lon;
 					p.lat = fresh.lat;
@@ -1383,7 +1416,7 @@ Module.register("MMM-WeatherMap", {
 		});
 		// Ghosts under live trails so fresh heads stay crisp on top.
 		this.ghosts.forEach((g) => {
-			this.strokeTrail(ctx2d, g, g.life);
+			this.strokeTrail(ctx2d, g, g.life, g.ratio);
 			if (advance) {
 				g.life -= 1 / GHOST_FRAMES;
 			}
@@ -1392,18 +1425,19 @@ Module.register("MMM-WeatherMap", {
 			this.ghosts = this.ghosts.filter((g) => g.life > 0);
 		}
 		this.particles.forEach((p) => {
-			this.strokeTrail(ctx2d, p, 1);
+			this.strokeTrail(ctx2d, p, 1, p.ratio);
 		});
 	},
 
 	/* A dying particle's trail detaches into a headless ghost that
 	 * keeps reprojecting while its alpha runs down — the tail fades
-	 * instead of popping. Copies history (never the live reference). */
-	ghostTrail: function (particle) {
+	 * instead of popping. Copies history (never the live reference);
+	 * keeps the death-speed ratio so the color fades with the trail. */
+	ghostTrail: function (particle, ratio = 1) {
 		if (!particle.trail || particle.trail.length < 2) {
 			return;
 		}
-		this.ghosts.push({ trail: particle.trail.slice(), life: 1 });
+		this.ghosts.push({ trail: particle.trail.slice(), life: 1, ratio });
 		if (this.ghosts.length > MAX_GHOSTS) {
 			this.ghosts.splice(0, this.ghosts.length - MAX_GHOSTS);
 		}
@@ -1438,7 +1472,8 @@ Module.register("MMM-WeatherMap", {
 
 	/* Screen drift for one map position from the gridded field: sample
 	 * U/V, convert to the legend's units, and reuse the uniform drift
-	 * scale so field and fallback motion match. Null without a field.
+	 * scale so field and fallback motion match — plus the legend
+	 * speed ratio driving the dot's color. Null without a field.
 	 * Pure — tested. */
 	fieldDrift: function (field, lon, lat, units) {
 		const sample = this.sampleWindField(field, lat, lon);
@@ -1449,22 +1484,26 @@ Module.register("MMM-WeatherMap", {
 		const direction = (Math.atan2(-sample.u, -sample.v) * 180) / Math.PI;
 		const scale = this.windLegendScale(units);
 		const toLegend = units === "metric" ? MS_TO_KMH : MS_TO_MPH;
-		return this.windDriftVector(direction, speed * toLegend, scale.max);
+		const legendSpeed = speed * toLegend;
+		const drift = this.windDriftVector(direction, legendSpeed, scale.max);
+		drift.ratio = this.speedRatio(legendSpeed, scale.max);
+		return drift;
 	},
 
 	/* One trail: a single path through its reprojected history points,
-	 * fading transparent (oldest) to white (newest), scaled by alpha
-	 * for ghosts. */
-	strokeTrail: function (ctx2d, particle, alpha = 1) {
+	 * fading transparent (oldest) to the legend speed color (newest),
+	 * scaled by alpha for ghosts. */
+	strokeTrail: function (ctx2d, particle, alpha = 1, ratio = 1) {
 		const projected = particle.trail.map((t) => this.map.project([t.lon, t.lat]));
 		if (projected.length < 2) {
 			return;
 		}
+		const [red, green, blue] = this.windColor(ratio);
 		const first = projected[0];
 		const last = projected[projected.length - 1];
 		const gradient = ctx2d.createLinearGradient(first.x, first.y, last.x, last.y);
-		gradient.addColorStop(0, "rgba(255, 255, 255, 0)");
-		gradient.addColorStop(1, "rgba(255, 255, 255, 0.6)");
+		gradient.addColorStop(0, `rgba(${red}, ${green}, ${blue}, 0)`);
+		gradient.addColorStop(1, `rgba(${red}, ${green}, ${blue}, 0.6)`);
 		ctx2d.strokeStyle = gradient;
 		ctx2d.globalAlpha = alpha;
 		ctx2d.beginPath();
