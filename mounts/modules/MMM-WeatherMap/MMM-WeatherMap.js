@@ -19,9 +19,6 @@ const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
-/* Cleared radius around the home dot: the overlay canvas paints above
- * the GL marker layer, so every frame erases a hole for it. */
-const MARKER_HOLE_RADIUS = 14;
 /* Legend stops (ratio → RGB), mirroring .vector-legend-bar-wind in
  * MMM-WeatherMap.css — faster reads whiter. The bottom stop is the
  * blue that used to sit at ~25 mph, so calm air reads sky, not navy.
@@ -102,14 +99,14 @@ Module.register("MMM-WeatherMap", {
 		this.windCallout = null;
 		this.windBadge = null;
 		this.lastMarkerStatus = null;
+		this.particleGL = null;
 		// Style readiness (set on map load): layer setup gates on
 		// THIS, never on map.loaded() — loaded() stays false under
 		// continuous tile churn and would orphan layers forever.
 		this.mapReady = false;
 		this.ghosts = [];
 		this.particles = [];
-		this.particleRaf = null;
-		this.particleCanvas = null;
+		this.particleGL = null;
 		this.getStyle();
 		this.getFrames();
 		this.getWind();
@@ -125,14 +122,15 @@ Module.register("MMM-WeatherMap", {
 		}, this.config.windFieldUpdateInterval);
 	},
 
-	/* MagicMirror lifecycle: pause the particle loop when hidden. */
+	/* MagicMirror lifecycle: drop the particle layer when hidden
+	 * (halts repaints), restore it on resume. */
 	suspend: function () {
-		this.stopParticles();
+		this.removeParticleLayer();
 	},
 
 	resume: function () {
-		if (this.isWindView() && this.playing) {
-			this.startParticles();
+		if (this.isWindView()) {
+			this.ensureParticleLayer();
 		}
 	},
 
@@ -177,7 +175,7 @@ Module.register("MMM-WeatherMap", {
 			return false;
 		}
 		this.view = view;
-		this.stopParticles();
+		this.removeParticleLayer();
 		if (typeof this.sendNotification === "function") {
 			this.sendNotification("WEATHERMAP_VIEW_CHANGED", { view });
 		}
@@ -350,7 +348,7 @@ Module.register("MMM-WeatherMap", {
 				this.windFields = payload.fields;
 				this.windIndex = this.defaultWindIndex();
 				if (this.isWindView()) {
-					this.stopParticles();
+					this.removeParticleLayer();
 					this.updateDom(this.config.animationSpeed);
 				} else {
 					this.updateTimeline();
@@ -361,7 +359,7 @@ Module.register("MMM-WeatherMap", {
 				this.wind = payload;
 				this.windIndex = this.defaultWindIndex();
 				if (this.isWindView()) {
-					this.stopParticles();
+					this.removeParticleLayer();
 					this.updateDom(this.config.animationSpeed);
 				} else {
 					this.updateTimeline();
@@ -453,14 +451,10 @@ Module.register("MMM-WeatherMap", {
 		}
 
 		if (this.isWindView()) {
-			const particles = document.createElement("canvas");
-			particles.className = "vector-particles";
-			mapDiv.appendChild(particles);
-			this.particleCanvas = particles;
-			// Location callout: a plain overlay sibling (not a map marker)
-			// so it stacks above the particle canvas — streaks never
-			// paint over any part of the circle. Repositioned from the
-			// map on every move via positionWindCallout().
+			// Location callout: a plain overlay sibling above the map
+			// canvas. Streaks render inside the GL stack beneath the
+			// home marker, so nothing paints over either. Repositioned
+			// from the map on every move via positionWindCallout().
 			const callout = document.createElement("div");
 			callout.className = "vector-wind-marker";
 			const badge = document.createElement("div");
@@ -471,7 +465,6 @@ Module.register("MMM-WeatherMap", {
 			this.windBadge = badge;
 			this.updateWindBadge();
 		} else {
-			this.particleCanvas = null;
 			this.windCallout = null;
 			this.windBadge = null;
 		}
@@ -490,7 +483,7 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	renderMapView: function (mapDiv) {
-		this.stopParticles();
+		this.removeParticleLayer();
 		// NOTE: do NOT clear windCallout/windBadge here — getDom builds
 		// them before this runs (via setTimeout), and the load handler
 		// below needs the live reference to position the callout.
@@ -544,7 +537,7 @@ Module.register("MMM-WeatherMap", {
 				this.positionWindCallout();
 				this.map.on("move", () => this.positionWindCallout());
 				this.map.on("resize", () => this.positionWindCallout());
-				this.startParticles();
+				this.ensureParticleLayer();
 			}
 		});
 	},
@@ -1352,47 +1345,167 @@ Module.register("MMM-WeatherMap", {
 	 * point means drags carry dots AND tails along rigidly.
 	 * Runs only in the wind view; the HRRR gridded field will replace
 	 * the uniform vector with bilinear sampling at the same call site. */
-	startParticles: function () {
-		if (this.particleRaf || !this.particleCanvas || !this.isWindView() || !this.map) {
+	/* Particle custom layer: trails render to an offscreen 2D canvas
+	 * (the same tested drawTrails picture), uploaded as a texture and
+	 * blitted as a fullscreen quad INSIDE the GL stack — beneath the
+	 * home marker layer, so no hole-punching is needed. render() ends
+	 * with triggerRepaint, the standard continuous-animation pattern;
+	 * dropping the layer (view switch, suspend) halts the loop. The
+	 * GL calls below are thin untested glue; every decision lives in
+	 * tested pure functions. */
+	particleLayerDef: function () {
+		const module = this;
+		return {
+			id: "wind-particles",
+			type: "custom",
+			renderingMode: "2d",
+			onAdd: function (map, gl) {
+				module.particleGL = module.initParticleGL(map, gl);
+			},
+			render: function (gl) {
+				module.renderParticleLayer(gl);
+			},
+			onRemove: function (map, gl) {
+				module.teardownParticleGL(gl);
+			}
+		};
+	},
+
+	compileParticleShader: function (gl, type, source) {
+		const shader = gl.createShader(type);
+		gl.shaderSource(shader, source);
+		gl.compileShader(shader);
+		if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+			Log.error(`[MMM-WeatherMap] particle shader failed: ${gl.getShaderInfoLog(shader)}`);
+			gl.deleteShader(shader);
+			return null;
+		}
+		return shader;
+	},
+
+	initParticleGL: function (map, gl) {
+		const canvas = document.createElement("canvas");
+		const ctx = canvas.getContext("2d");
+		if (!ctx) {
+			return null;
+		}
+		const vert = this.compileParticleShader(gl, gl.VERTEX_SHADER,
+			"attribute vec2 a_pos; attribute vec2 a_uv; varying vec2 v_uv;" +
+			"void main() { gl_Position = vec4(a_pos, 0.0, 1.0); v_uv = a_uv; }");
+		const frag = this.compileParticleShader(gl, gl.FRAGMENT_SHADER,
+			"precision mediump float; varying vec2 v_uv; uniform sampler2D u_tex;" +
+			"void main() { gl_FragColor = texture2D(u_tex, v_uv); }");
+		if (!vert || !frag) {
+			return null;
+		}
+		const program = gl.createProgram();
+		gl.attachShader(program, vert);
+		gl.attachShader(program, frag);
+		gl.linkProgram(program);
+		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+			Log.error("[MMM-WeatherMap] particle program link failed");
+			return null;
+		}
+		const buffer = gl.createBuffer();
+		gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+		gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 0, 0, 1, -1, 1, 0, -1, 1, 0, 1, 1, 1, 1, 1]), gl.STATIC_DRAW);
+		const texture = gl.createTexture();
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+		gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+		return { canvas, ctx, program, texture, buffer, width: 0, height: 0, cssWidth: 0, cssHeight: 0, dpr: 1 };
+	},
+
+	renderParticleLayer: function (gl) {
+		const state = this.particleGL;
+		const map = this.map;
+		if (!state || !map || !this.isWindView()) {
 			return;
 		}
-		const canvas = this.particleCanvas;
-		const parent = canvas.parentElement;
-		if (!parent) {
+		const glCanvas = map.getCanvas();
+		if (glCanvas.width !== state.width || glCanvas.height !== state.height) {
+			state.width = glCanvas.width;
+			state.height = glCanvas.height;
+			state.cssWidth = glCanvas.clientWidth || 420;
+			state.cssHeight = glCanvas.clientHeight || 420;
+			state.dpr = state.width / state.cssWidth;
+			state.canvas.width = state.width;
+			state.canvas.height = state.height;
+			// Trail coordinates arrive in CSS px (map.project); scale
+			// the 2D context up to device px once per resize.
+			state.ctx.setTransform(state.dpr, 0, 0, state.dpr, 0, 0);
+		}
+		this.advectParticles(state.ctx, state.cssWidth, state.cssHeight, true);
+		gl.viewport(0, 0, state.width, state.height);
+		gl.disable(gl.DEPTH_TEST);
+		gl.enable(gl.BLEND);
+		gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+		gl.useProgram(state.program);
+		gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer);
+		const pos = gl.getAttribLocation(state.program, "a_pos");
+		const uv = gl.getAttribLocation(state.program, "a_uv");
+		gl.enableVertexAttribArray(pos);
+		gl.enableVertexAttribArray(uv);
+		gl.vertexAttribPointer(pos, 2, gl.FLOAT, false, 16, 0);
+		gl.vertexAttribPointer(uv, 2, gl.FLOAT, false, 16, 8);
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, state.texture);
+		gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+		gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, state.canvas);
+		gl.uniform1i(gl.getUniformLocation(state.program, "u_tex"), 0);
+		gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+		gl.disableVertexAttribArray(pos);
+		gl.disableVertexAttribArray(uv);
+		map.triggerRepaint();
+	},
+
+	teardownParticleGL: function (gl) {
+		const state = this.particleGL;
+		this.particleGL = null;
+		if (state && gl) {
+			try {
+				gl.deleteTexture(state.texture);
+				gl.deleteProgram(state.program);
+				gl.deleteBuffer(state.buffer);
+			} catch (error) {
+				Log.warn(`[MMM-WeatherMap] particle GL teardown: ${error.message || error}`);
+			}
+		}
+	},
+
+	ensureParticleLayer: function () {
+		if (!this.map || !this.isWindView()) {
 			return;
 		}
-		canvas.width = parent.clientWidth || 420;
-		canvas.height = parent.clientHeight || 420;
-		const ctx2d = canvas.getContext("2d");
-		if (!ctx2d) {
+		if (this.map.getLayer && this.map.getLayer("wind-particles")) {
 			return;
 		}
+		const size = this.map.getCanvas();
+		const cssWidth = (size && size.clientWidth) || 420;
+		const cssHeight = (size && size.clientHeight) || 420;
 		this.particles = [];
 		this.ghosts = [];
 		for (let i = 0; i < WIND_PARTICLE_COUNT; i += 1) {
-			this.particles.push(this.spawnParticle(canvas.width, canvas.height));
+			this.particles.push(this.spawnParticle(cssWidth, cssHeight));
 		}
-		const step = () => {
-			if (!this.isWindView() || !this.particleCanvas) {
-				this.particleRaf = null;
-				return;
-			}
-			// Timeline pause never stills the air: particles advect
-			// every frame, paused or playing — only the hourly advance
-			// halts. (Module hide still stops everything via suspend.)
-			this.advectParticles(ctx2d, canvas.width, canvas.height, true);
-			this.particleRaf = requestAnimationFrame(step);
-		};
-		this.particleRaf = requestAnimationFrame(step);
+		this.map.addLayer(this.particleLayerDef());
+		// Markers stay the topmost layer: streaks can never cover home.
+		if (this.map.getLayer("markers")) {
+			this.map.moveLayer("markers");
+		}
 	},
 
-	stopParticles: function () {
-		if (this.particleRaf && typeof cancelAnimationFrame === "function") {
-			cancelAnimationFrame(this.particleRaf);
-		}
-		this.particleRaf = null;
+	removeParticleLayer: function () {
 		this.particles = [];
 		this.ghosts = [];
+		// removeLayer fires onRemove, which does the GL teardown;
+		// the null below is only a backstop for a dead map.
+		if (this.map && this.map.getLayer && this.map.getLayer("wind-particles")) {
+			this.map.removeLayer("wind-particles");
+		}
+		this.particleGL = null;
 	},
 
 	/* Birth a particle at a random on-screen point, stored as lon/lat
@@ -1412,11 +1525,11 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	/* Advance the field one frame (or just redraw it when advance is
-	 * false): clear everything, move each particle along the current
-	 * slot's wind vector, append to its trail history, and stroke each
-	 * trail oldest-to-newest under a transparent-to-white gradient.
-	 * Because history is geographic, every point reprojects — pans
-	 * and zooms carry whole trails rigidly, with no bitmap to smear. */
+	 * false): move each particle along the current slot's wind vector
+	 * and append to its trail history, then paint everything via
+	 * drawTrails. Because history is geographic, every point
+	 * reprojects — pans and zooms carry whole trails rigidly, with
+	 * no bitmap to smear. */
 	advectParticles: function (ctx2d, width, height, advance = true) {
 		const slots = this.windSlots();
 		const slot = slots.length > 0 ? slots[Math.min(this.windIndex, slots.length - 1)] : null;
@@ -1425,17 +1538,11 @@ Module.register("MMM-WeatherMap", {
 		// hour; otherwise each particle samples its own hour's field.
 		const fallback = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
 		fallback.ratio = this.speedRatio(slot && slot.speed, scale.max);
-		// Full clear, never a translucent fade: the map underneath
-		// returns to its exact base color every frame. No residue.
-		ctx2d.clearRect(0, 0, width, height);
-		ctx2d.lineWidth = 2;
-		ctx2d.lineCap = "round";
-		ctx2d.lineJoin = "round";
 		if (!Array.isArray(this.ghosts)) {
 			this.ghosts = [];
 		}
-		this.particles.forEach((p) => {
-			if (advance) {
+		if (advance) {
+			this.particles.forEach((p) => {
 				let drift = fallback;
 				const field = slot && slot.fieldIndex >= 0 ? this.windFields[slot.fieldIndex] : null;
 				if (field) {
@@ -1464,38 +1571,38 @@ Module.register("MMM-WeatherMap", {
 					p.age = 0;
 					p.maxAge = fresh.maxAge;
 				}
-			}
-		});
+			});
+		}
+		this.drawTrails(ctx2d, width, height);
+		if (advance) {
+			this.ghosts.forEach((g) => {
+				g.life -= 1 / GHOST_FRAMES;
+			});
+			this.ghosts = this.ghosts.filter((g) => g.life > 0);
+		}
+	},
+
+	/* Paint every trail onto a 2D context: full clear (never a
+	 * translucent fade, so no residue), ghosts under live trails.
+	 * Shared by the overlay path and the GL custom layer's offscreen
+	 * canvas — same picture, different destination. */
+	drawTrails: function (ctx2d, width, height) {
+		// Full clear, never a translucent fade: the map underneath
+		// returns to its exact base color every frame. No residue.
+		ctx2d.clearRect(0, 0, width, height);
+		ctx2d.lineWidth = 2;
+		ctx2d.lineCap = "round";
+		ctx2d.lineJoin = "round";
+		if (!Array.isArray(this.ghosts)) {
+			this.ghosts = [];
+		}
 		// Ghosts under live trails so fresh heads stay crisp on top.
 		this.ghosts.forEach((g) => {
 			this.strokeTrail(ctx2d, g, g.life, g.ratio);
-			if (advance) {
-				g.life -= 1 / GHOST_FRAMES;
-			}
 		});
-		if (advance) {
-			this.ghosts = this.ghosts.filter((g) => g.life > 0);
-		}
 		this.particles.forEach((p) => {
 			this.strokeTrail(ctx2d, p, 1, p.ratio);
 		});
-		this.punchMarkerHole(ctx2d);
-	},
-
-	/* Erase a hole around the home dot: the streak canvas sits above
-	 * the GL marker layer, so without this every trail paints over
-	 * the marker. Runs on advance and paused redraws alike. */
-	punchMarkerHole: function (ctx2d) {
-		if (!this.map) {
-			return;
-		}
-		const home = this.map.project(this.homeLngLat());
-		ctx2d.save();
-		ctx2d.globalCompositeOperation = "destination-out";
-		ctx2d.beginPath();
-		ctx2d.arc(home.x, home.y, MARKER_HOLE_RADIUS, 0, Math.PI * 2);
-		ctx2d.fill();
-		ctx2d.restore();
 	},
 
 	/* A dying particle's trail detaches into a headless ghost that

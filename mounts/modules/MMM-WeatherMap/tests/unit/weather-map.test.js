@@ -445,7 +445,7 @@ describe("wind scrub and badge", () => {
 // space (screen = geo * 10) plus a mutable pan offset, so tests
 // simulate drags by mutating map.pan.
 function trailStub() {
-		const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [], saved: [], restored: [], arcs: [], filled: [] };
+		const calls = { moveTo: [], lineTo: [], cleared: [], gradients: [], stops: [], unprojected: [] };
 		const ctx2d = {
 			clearRect: (x, y, w, h) => calls.cleared.push([x, y, w, h]),
 			createLinearGradient: (x0, y0, x1, y1) => {
@@ -455,11 +455,7 @@ function trailStub() {
 			beginPath: () => {},
 			moveTo: (x, y) => calls.moveTo.push([x, y]),
 			lineTo: (x, y) => calls.lineTo.push([x, y]),
-			stroke: () => {},
-			save: () => calls.saved.push(true),
-			restore: () => calls.restored.push(true),
-			arc: (x, y, r) => calls.arcs.push([x, y, r]),
-			fill: () => calls.filled.push(true)
+			stroke: () => {}
 		};
 	const map = {
 		pan: { x: 0, y: 0 },
@@ -481,8 +477,7 @@ function particleCtx(map, particles) {
 		particles,
 			ghosts: [],
 			windIndex: 0,
-			config: { units: "imperial", lat: 2, lon: 1, markers: [{ lat: 2, lng: 1 }] },
-			homeLngLat: function () { return def.homeLngLat.call(this); },
+			config: { units: "imperial" },
 			currentWindSlot: () => ({ direction: 0, speed: 75 }),
 			windLegendScale: def.windLegendScale,
 			windDriftVector: def.windDriftVector,
@@ -495,7 +490,7 @@ function particleCtx(map, particles) {
 		spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); },
 		ghostTrail: function (p) { return def.ghostTrail.call(this, p); },
 			strokeTrail: function (...args) { return def.strokeTrail.call(this, ...args); },
-			punchMarkerHole: function (c2d) { return def.punchMarkerHole.call(this, c2d); },
+			drawTrails: function (...args) { return def.drawTrails.call(this, ...args); },
 	};
 }
 
@@ -1028,28 +1023,78 @@ describe("legend colors", () => {
 		assert.deepEqual(calls.stops, [[0, "rgba(81, 177, 222, 0)"], [1, "rgba(81, 177, 222, 0.6)"]]);
 	});
 
-	it("erases a hole around the home dot every frame", () => {
-		const { calls, ctx2d, map } = trailStub();
-		const c = particleCtx(map, []);
-		def.punchMarkerHole.call(c, ctx2d);
-		// Home (lon 1, lat 2) projects to stub (10, 20).
-		assert.deepEqual(calls.arcs, [[10, 20, 14]]);
-		assert.deepEqual(calls.saved, [true]);
-		assert.deepEqual(calls.restored, [true]);
-		assert.deepEqual(calls.filled, [true]);
-	});
-
-	it("skips the hole without a map", () => {
-		const { ctx2d } = trailStub();
-		def.punchMarkerHole.call(ctx({ map: null }), ctx2d);
-	});
-
 	it("carries drift ratio into ghost trails", () => {
 		const { map } = trailStub();
 		const c = particleCtx(map, []);
 		c.ghosts = [];
 		def.ghostTrail.call(c, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 0.25);
 		assert.equal(c.ghosts[0].ratio, 0.25);
+	});
+});
+
+describe("particle GL layer", () => {
+	function layerMap(layers = []) {
+		const calls = { added: [], removed: [], moved: [] };
+		return {
+			calls,
+			getCanvas: () => ({ clientWidth: 420, clientHeight: 420 }),
+			getLayer: (id) => (layers.includes(id) ? {} : undefined),
+			addLayer: (def) => {
+				calls.added.push(def.id);
+				layers.push(def.id);
+			},
+			removeLayer: (id) => {
+				calls.removed.push(id);
+				layers.splice(layers.indexOf(id), 1);
+			},
+			moveLayer: (id) => calls.moved.push(id),
+			project: ([lon, lat]) => ({ x: lon * 10, y: lat * 10 }),
+			unproject: ([x, y]) => ({ lng: x / 10, lat: y / 10 })
+		};
+	}
+
+	it("adds the layer under markers in wind view", () => {
+		const map = layerMap(["markers"]);
+		const c = ctx({ map, view: "wind", particles: [], ghosts: [] });
+		def.ensureParticleLayer.call(c);
+		assert.deepEqual(map.calls.added, ["wind-particles"]);
+		assert.deepEqual(map.calls.moved, ["markers"]);
+		assert.equal(c.particles.length, 250);
+	});
+
+	it("is a no-op outside wind view or when present", () => {
+		const map = layerMap([]);
+		def.ensureParticleLayer.call(ctx({ map, view: "precip" }));
+		assert.deepEqual(map.calls.added, []);
+		const present = layerMap(["wind-particles"]);
+		def.ensureParticleLayer.call(ctx({ map: present, view: "wind", particles: [], ghosts: [] }));
+		assert.deepEqual(present.calls.added, []);
+	});
+
+	it("removes the layer and clears state", () => {
+		const map = layerMap(["wind-particles"]);
+		const c = ctx({ map, particles: [1], ghosts: [2] });
+		def.removeParticleLayer.call(c);
+		assert.deepEqual(map.calls.removed, ["wind-particles"]);
+		assert.deepEqual(c.particles, []);
+		assert.deepEqual(c.ghosts, []);
+	});
+
+	it("layer def carries the continuous-animation contract", () => {
+		const seen = [];
+		const c = ctx({});
+		const defn = def.particleLayerDef.call({
+			...c,
+			particleGL: "state",
+			isWindView: () => true,
+			initParticleGL: () => "state",
+			teardownParticleGL: (gl) => seen.push(gl || "no-gl")
+		});
+		assert.equal(defn.id, "wind-particles");
+		assert.equal(defn.type, "custom");
+		defn.onAdd({}, "gl");
+		defn.onRemove({}, "gl-arg");
+		assert.deepEqual(seen, ["gl-arg"]);
 	});
 });
 
