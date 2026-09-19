@@ -1397,6 +1397,26 @@ describe("applyPosition", () => {
 	});
 });
 
+describe("start", () => {
+	it("requests style, frames, and both wind feeds", () => {
+		const sent = [];
+		const realSetInterval = global.setInterval;
+		global.setInterval = () => 0;
+		const c = ctx({
+			config: { defaultView: "precip", lat: 1, lon: 2, units: "imperial" },
+			sendSocketNotification: (n) => sent.push(n)
+		});
+		try {
+			def.start.call(c);
+		} finally {
+			global.setInterval = realSetInterval;
+		}
+		for (const name of ["GET_VECTOR_STYLE", "GET_VECTOR_FRAMES", "GET_WIND_SUMMARY", "GET_WIND_FIELDS"]) {
+			assert.ok(sent.includes(name), `missing ${name}`);
+		}
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];

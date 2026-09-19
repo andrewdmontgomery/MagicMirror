@@ -115,6 +115,7 @@ Module.register("MMM-WeatherMap", {
 		this.mapReady = false;
 		this.ghosts = [];
 		this.particles = [];
+		this.getStyle();
 		this.getFrames();
 		this.getWind();
 		this.getWindFields();
