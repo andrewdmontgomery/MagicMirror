@@ -1054,9 +1054,10 @@ Module.register("MMM-WeatherMap", {
 		return timeline;
 	},
 
-	/* Apple-style history timeline: header row (play + current frame
-	 * time), then a full-width scrubbable track. Free RainViewer has
-	 * past frames only, so this covers history, not forecast. */
+	/* Precip timeline mirrors the wind layout exactly: header row
+	 * (play + "Precipitation" title with the current frame time
+	 * below it), then a full-width scrubbable track. Free RainViewer
+	 * has past frames only, so this covers history, not forecast. */
 	precipTimelineDiv: function () {
 		const timeline = document.createElement("div");
 		timeline.className = "vector-timeline";
@@ -1071,10 +1072,19 @@ Module.register("MMM-WeatherMap", {
 		this.playButton.addEventListener("click", () => this.togglePlay());
 		header.appendChild(this.playButton);
 
-		this.timelineLabel = document.createElement("div");
-		this.timelineLabel.className = "vector-tl-label light";
-		header.appendChild(this.timelineLabel);
+		const titles = document.createElement("div");
+		titles.className = "vector-tl-titles";
 
+		const title = document.createElement("div");
+		title.className = "vector-tl-label light";
+		title.textContent = "Precipitation";
+		titles.appendChild(title);
+
+		this.timelineLabel = document.createElement("div");
+		this.timelineLabel.className = "vector-tl-date light";
+		titles.appendChild(this.timelineLabel);
+
+		header.appendChild(titles);
 		timeline.appendChild(header);
 
 		this.buildTrackNodes();
