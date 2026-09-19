@@ -4,7 +4,9 @@
 
 **Why not just serve everything:** one HRRR hour is 3.8M vectors (~30 MB); 17 hourly frames is half a gigabyte per refresh. The browser gets downsampled grids, period. The fix is serving *two* grids per hour instead of one.
 
-**Architecture:** `node_helper.js` resamples each hourly frame twice from the already-downloaded messages (no extra fetching): the existing fine regional grid (40×40, stride 8, ~24 km/node) plus a coarse continental grid (40×40, stride ~45×27, ~135 km/node) covering the full HRRR domain. The frontend samples the fine grid inside its bbox and falls through to the coarse grid outside it; only beyond CONUS does it clamp. Payload roughly doubles to ~870 KB per refresh — still trivial over the socket.
+**Architecture:** `node_helper.js` resamples each hourly frame twice from the already-downloaded messages (no extra fetching): a fine regional grid (40×40, stride 8, ~24 km/node) plus a coarse continental grid (40×40, stride ~45×27, ~135 km/node) covering the full HRRR domain. The frontend samples the fine grid inside its bbox and falls through to the coarse grid outside it; only beyond CONUS does it clamp. Payload roughly doubles to ~870 KB per refresh — still trivial over the socket.
+
+**Dynamic recentering:** the fine window is not pinned to home — it follows the map. The frontend requests fields for the current map center (home on startup), and on `moveend` (debounced ~1.5 s) refetches only if the center left the fine bbox, skipping while a fetch is already in flight. Panning shows coarse flow immediately (already correct, just smooth), then fine detail pops in like any slippy map. Zooming in anywhere — Florida, the coast, wherever — converges to full detail after one fetch. The badge/callout stay pinned to the configured home regardless; only the field window moves.
 
 **Tech Stack:** existing grib2.js + node_helper resampling + frontend bilinear sampling. No new dependencies, no Dockerfile change.
 
@@ -38,7 +40,7 @@ git add mounts/modules/MMM-WeatherMap/node_helper.js mounts/modules/MMM-WeatherM
 git commit -m "feat: coarse CONUS wind grid alongside regional"
 ```
 
-## Phase 2 — Frontend dual sampling
+## Phase 2 — Frontend dual sampling + recentering
 
 ### Task 2: Regional-first sampling with continental fallthrough
 
@@ -53,6 +55,21 @@ git commit -m "feat: coarse CONUS wind grid alongside regional"
 **Step 3:** Implement. Restart, zoom from home to full-CONUS and confirm streaks show synoptic flow (e.g. westerlies where expected) instead of smeared edges. Commit:
 ```bash
 git commit -m "feat: sample continental wind grid outside regional window"
+```
+
+### Task 3: Fine window follows the map center
+
+**Files:**
+- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`getWindFields` accepts an explicit center defaulting to config; `moveend` listener debounced ~1.5 s refetches when the center leaves the fine bbox; in-flight guard skips overlaps)
+- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js`
+
+**Step 1:** Write the failing tests — `fineWindowCovers(center)` true inside (edges inclusive) and false outside; moveend handler sends the map center (not config home) when uncovered, sends nothing when covered or a fetch is in flight.
+
+**Step 2:** Run, expect FAIL.
+
+**Step 3:** Implement. Restart, pan to another state and confirm: coarse flow immediately, fine detail after one fetch; badge and callout stay on home throughout. Commit:
+```bash
+git commit -m "feat: recenter wind window on map movement"
 ```
 
 ## Risks
