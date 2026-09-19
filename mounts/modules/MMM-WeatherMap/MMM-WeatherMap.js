@@ -84,6 +84,9 @@ Module.register("MMM-WeatherMap", {
 		this.frameIndex = 0;
 		this.stepStart = null;
 		this.progressTimer = null;
+		// Play state persists separately per map type: pausing rain
+		// never stills the wind view, and vice versa.
+		this.playing = { precip: true, wind: true };
 		this.positionIndex = 0;
 		this.loopCount = 0;
 		this.frameTimer = null;
@@ -513,7 +516,14 @@ Module.register("MMM-WeatherMap", {
 		});
 		this.map.addControl(this.resetControl(), "top-right");
 		this.map.addControl(this.viewControl(), "top-right");
+		// Capture the instance: rapid view swaps can leave a previous
+		// map's load handler firing after a newer map replaced it —
+		// that handler must no-op instead of painting a dead map.
+		const freshMap = this.map;
 		this.map.on("load", () => {
+			if (this.map !== freshMap) {
+				return;
+			}
 			if (!this.isWindView()) {
 				this.addRadarLayer();
 			}
@@ -929,10 +939,13 @@ Module.register("MMM-WeatherMap", {
 			// Opacity (not visibility): transparent layers keep their
 			// tiles loaded, so switching frames never flashes blank.
 			this.map.setPaintProperty(`rainviewer-${index}`, "raster-opacity", this.config.radarOpacity);
-			// Re-pin markers above the radar on every frame: belt and
-			// suspenders against any ordering drift.
+			// Re-pin markers above the radar on every frame — and
+			// re-add them if a swap race ever lost the layer, mirroring
+			// the per-tick radar retry in restartAnimation.
 			if (this.map.getLayer("markers")) {
 				this.map.moveLayer("markers");
+			} else {
+				this.addMarkers();
 			}
 		}
 		this.updateTimeline();

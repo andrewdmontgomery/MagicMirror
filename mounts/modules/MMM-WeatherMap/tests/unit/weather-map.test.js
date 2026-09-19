@@ -115,6 +115,20 @@ describe("showFrame", () => {
 		def.showFrame.call(c, 3, { prev: 1 });
 		assert.equal(c.frameIndex, 3);
 	});
+
+	it("re-adds a swap-lost marker layer on the next frame", () => {
+		const map = mapStub();
+		map.getLayer = () => undefined;
+		const added = [];
+		const c = ctx({ frames: framesFixture(), map });
+		c.addMarkers = () => added.push(true);
+		def.showFrame.call(c, 3, { prev: 1 });
+		assert.deepEqual(added, [true]);
+		assert.deepEqual(map.calls.paint, [
+			["rainviewer-1", "raster-opacity", 0],
+			["rainviewer-3", "raster-opacity", 0.45]
+		]);
+	});
 });
 
 describe("windLegendScale", () => {
