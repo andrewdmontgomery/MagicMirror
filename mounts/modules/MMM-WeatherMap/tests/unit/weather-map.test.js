@@ -380,6 +380,8 @@ describe("wind scrub and badge", () => {
 					...c,
 					windWindow: def.windWindow,
 					currentWindSlot: def.currentWindSlot,
+					currentConditions: def.currentConditions,
+					nowWindSlot: def.nowWindSlot,
 					updateWindBadge: def.updateWindBadge,
 					windBadgeSvg: def.windBadgeSvg,
 					updateTimeline: () => {},
@@ -657,6 +659,81 @@ describe("field sampling", () => {
 		assert.ok(drift.dx > 0, `dx ${drift.dx}`);
 		assert.ok(Math.abs(drift.dy) < 1e-9, `dy ${drift.dy}`);
 		assert.ok(Math.abs(drift.dx - expected.dx) < 1e-9);
+	});
+
+	function hourlyAroundNow() {
+		const nowSec = Math.floor(Date.now() / 1000);
+		const base = nowSec - (nowSec % 3600) - 10 * 3600;
+		const time = [];
+		const speed = [];
+		const direction = [];
+		for (let i = 0; i < 24; i += 1) {
+			time.push(base + i * 3600);
+			speed.push(5 + i);
+			direction.push(90 + i);
+		}
+		return { time, speed, direction };
+	}
+
+	it("nowWindSlot ignores the scrub position", () => {
+		const hourly = hourlyAroundNow();
+		const near = ctx({ config: { windHoursPast: 4, windHoursFuture: 12 }, wind: { hourly }, windIndex: 0 });
+		const far = ctx({ config: { windHoursPast: 4, windHoursFuture: 12 }, wind: { hourly }, windIndex: 15 });
+		for (const c of [near, far]) {
+			c.windWindow = (h, n, p, f) => def.windWindow.call(c, h, n, p, f);
+		}
+		const a = def.nowWindSlot.call(near);
+		const b = def.nowWindSlot.call(far);
+		assert.ok(a.isNow && b.isNow);
+		assert.equal(a.time, b.time);
+	});
+
+	it("currentConditions prefers the live block over the hourly", () => {
+		const c = ctx({
+			config: { windHoursPast: 4, windHoursFuture: 12 },
+			wind: {
+				current: { speed: 7.4, direction: 111 },
+				hourly: hourlyAroundNow()
+			},
+			windIndex: 3
+		});
+		c.windWindow = (h, n, p, f) => def.windWindow.call(c, h, n, p, f);
+		assert.deepEqual(def.currentConditions.call(c), { speed: 7.4, direction: 111 });
+	});
+
+	it("currentConditions falls back to the now-slot", () => {
+		const hourly = hourlyAroundNow();
+		const c = ctx({ config: { windHoursPast: 4, windHoursFuture: 12 }, wind: { hourly }, windIndex: 1 });
+		c.windWindow = (h, n, p, f) => def.windWindow.call(c, h, n, p, f);
+		const current = def.currentConditions.call(c);
+		assert.ok(current.isNow, "falls back to the now-anchored slot");
+	});
+
+	it("currentConditions is null without data", () => {
+		assert.equal(def.currentConditions.call(ctx({ wind: null })), null);
+	});
+
+	it("badges live conditions, ignoring scrub and field", () => {
+		const badge = {};
+		const field = { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [10, 10, 10, 10], v: [0, 0, 0, 0] };
+		const c = ctx({
+			config: { units: "imperial", lat: 2.5, lon: 0.5, windHoursPast: 4, windHoursFuture: 12 },
+			windField: field,
+			windBadge: badge,
+			wind: {
+				current: { speed: 7.4, direction: 111 },
+				hourly: { time: [1], speed: [99], direction: [0] }
+			},
+			windIndex: 0
+		});
+		for (const fn of ["windLegendScale", "windCompass16", "windBadgeSvg", "windWindow"]) {
+			c[fn] = (...args) => def[fn].call(c, ...args);
+		}
+		c.currentConditions = () => def.currentConditions.call(c);
+		c.nowWindSlot = () => def.nowWindSlot.call(c);
+		def.updateWindBadge.call(c);
+		assert.match(badge.innerHTML, />ESE</);
+		assert.match(badge.innerHTML, />7</);
 	});
 
 	it("advects particles along the field, not the fallback", () => {

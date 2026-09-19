@@ -573,18 +573,45 @@ Module.register("MMM-WeatherMap", {
 		);
 	},
 
+	/* Current conditions at the pinned location — the live current
+	 * block, else the hourly now-slot. Never the scrubbed windIndex:
+	 * the badge is a readout, not a timeline cursor. (The gridded
+	 * field will feed this in Task 5's hourly frames; until then the
+	 * badge intentionally reads the obs-anchored series.) */
+	currentConditions: function () {
+		if (this.wind && this.wind.current && this.wind.current.speed !== null && this.wind.current.speed !== undefined) {
+			return { speed: this.wind.current.speed, direction: this.wind.current.direction };
+		}
+		return this.nowWindSlot();
+	},
+
+	/* The hourly slot covering right now, regardless of scrub position.
+	 * Pure-ish (clock-read) — tested. */
+	nowWindSlot: function () {
+		if (!this.wind || !this.wind.hourly) {
+			return null;
+		}
+		const window = this.windWindow(
+			this.wind.hourly,
+			Math.floor(Date.now() / 1000),
+			this.config.windHoursPast,
+			this.config.windHoursFuture
+		);
+		return window.find((slot) => slot.isNow) || window[0] || null;
+	},
+
 	updateWindBadge: function () {
 		if (!this.windBadge) {
 			return;
 		}
-		const slot = this.currentWindSlot();
 		const scale = this.windLegendScale(this.config.units);
-		if (!slot || slot.speed === null || slot.speed === undefined) {
+		const current = this.currentConditions();
+		if (!current || current.speed === null || current.speed === undefined) {
 			this.windBadge.innerHTML = this.windBadgeSvg("–", "–", scale.unit);
 			return;
 		}
-		const direction = this.windCompass16(slot.direction);
-		const speed = Math.round(slot.speed);
+		const direction = this.windCompass16(current.direction);
+		const speed = Math.round(current.speed);
 		this.windBadge.innerHTML = this.windBadgeSvg(direction, speed, scale.unit.toUpperCase());
 	},
 
