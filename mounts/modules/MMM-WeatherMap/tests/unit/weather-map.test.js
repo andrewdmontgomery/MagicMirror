@@ -85,24 +85,47 @@ describe("scrubTo", () => {
 		assert.equal(c.frameTimer, undefined);
 	});
 
-	it("runs the glide ticker only while playing", () => {
+	it("runs the glide loop only while playing", () => {
 		const started = [];
-		const realSetInterval = global.setInterval;
-		global.setInterval = (fn) => {
+		const realRaf = global.requestAnimationFrame;
+		global.requestAnimationFrame = (fn) => {
 			started.push(fn);
 			return started.length;
 		};
 		try {
 			const paused = ctx({ view: "precip", playing: { precip: false, wind: true } });
 			def.startProgressTicker.call(paused);
-			assert.equal(paused.progressTimer, undefined);
+			assert.equal(paused.progressRaf, undefined);
 			const playing = ctx({ view: "precip", playing: { precip: true, wind: true } });
 			def.startProgressTicker.call(playing);
 			def.startProgressTicker.call(playing);
-			assert.equal(playing.progressTimer, 1);
+			assert.equal(playing.progressRaf, 1);
 			assert.equal(started.length, 1);
 		} finally {
-			global.setInterval = realSetInterval;
+			if (realRaf === undefined) {
+				delete global.requestAnimationFrame;
+			} else {
+				global.requestAnimationFrame = realRaf;
+			}
+		}
+	});
+
+	it("stops the glide loop when paused mid-flight", () => {
+		const cancelled = [];
+		const realCancel = global.cancelAnimationFrame;
+		global.cancelAnimationFrame = (id) => cancelled.push(id);
+		try {
+			const c = ctx({ progressRaf: 7 });
+			def.stopProgressTicker.call(c);
+			assert.deepEqual(cancelled, [7]);
+			assert.equal(c.progressRaf, null);
+			def.stopProgressTicker.call(ctx({}));
+		} finally {
+			if (realCancel === undefined) {
+				delete global.cancelAnimationFrame;
+			} else {
+				global.cancelAnimationFrame = realCancel;
+			}
 		}
 	});
 
@@ -113,11 +136,11 @@ describe("scrubTo", () => {
 			playing: { precip: false, wind: true },
 			map: null,
 			frameTimer: undefined,
-			progressTimer: undefined
+			progressRaf: undefined
 		});
 		def.restartAnimation.call(c);
 		assert.equal(c.frameTimer, undefined);
-		assert.equal(c.progressTimer, undefined);
+		assert.equal(c.progressRaf, null);
 	});
 
 	it("keeps play state per view", () => {
@@ -130,9 +153,10 @@ describe("scrubTo", () => {
 		c.view = "precip";
 		def.togglePlay.call(c);
 		assert.deepEqual(c.playing, { precip: true, wind: false });
-		// togglePlay restarts the glide ticker: release it so the
-		// runner exits (production clears it on pause/restart).
-		clearInterval(c.progressTimer);
+		// togglePlay restarts animation: release the frame timer so
+		// the runner exits (production clears it on pause/restart).
+		// The glide loop needs no release — requestAnimationFrame
+		// is undefined here, so it never starts.
 		clearInterval(c.frameTimer);
 	});
 });

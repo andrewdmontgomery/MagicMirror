@@ -89,7 +89,7 @@ Module.register("MMM-WeatherMap", {
 		this.frames = null;
 		this.frameIndex = 0;
 		this.stepStart = null;
-		this.progressTimer = null;
+		this.progressRaf = null;
 		// Play state persists separately per map type: pausing rain
 		// never stills the wind view, and vice versa.
 		this.playing = { precip: true, wind: true };
@@ -1030,17 +1030,31 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
-	/* Glide ticker: repaints just the progress fill ten times a
-	 * second so it sweeps continuously between frame swaps. Only
-	 * ever runs while playing — a ticker on a paused view is what
-	 * made stopped timelines creep. */
+	/* Glide loop: repaints the progress fill every display frame so
+	 * it sweeps continuously between frame swaps (~60 sub-pixel
+	 * steps per second — a 100ms ticker reads as ticking). Only
+	 * ever runs while playing, and the browser itself halts it in
+	 * hidden tabs. */
 	startProgressTicker: function () {
-		if (this.progressTimer || !this.isPlaying()) {
+		if (this.progressRaf || !this.isPlaying() || typeof requestAnimationFrame !== "function") {
 			return;
 		}
-		this.progressTimer = setInterval(() => {
+		const tick = () => {
+			if (!this.isPlaying()) {
+				this.progressRaf = null;
+				return;
+			}
 			this.paintProgress();
-		}, 100);
+			this.progressRaf = requestAnimationFrame(tick);
+		};
+		this.progressRaf = requestAnimationFrame(tick);
+	},
+
+	stopProgressTicker: function () {
+		if (this.progressRaf && typeof cancelAnimationFrame === "function") {
+			cancelAnimationFrame(this.progressRaf);
+		}
+		this.progressRaf = null;
 	},
 
 	restartAnimation: function () {
@@ -1048,10 +1062,7 @@ Module.register("MMM-WeatherMap", {
 			clearInterval(this.frameTimer);
 			this.frameTimer = null;
 		}
-		if (this.progressTimer) {
-			clearInterval(this.progressTimer);
-			this.progressTimer = null;
-		}
+		this.stopProgressTicker();
 		if (this.isWindView()) {
 			this.restartWindAnimation();
 			return;
@@ -1190,10 +1201,7 @@ Module.register("MMM-WeatherMap", {
 				clearInterval(this.frameTimer);
 				this.frameTimer = null;
 			}
-			if (this.progressTimer) {
-				clearInterval(this.progressTimer);
-				this.progressTimer = null;
-			}
+			this.stopProgressTicker();
 		}
 	},
 
