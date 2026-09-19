@@ -98,6 +98,7 @@ Module.register("MMM-WeatherMap", {
 		this.windFields = [];
 		this.windCallout = null;
 		this.windBadge = null;
+		this.lastMarkerStatus = null;
 		this.ghosts = [];
 		this.particles = [];
 		this.particleRaf = null;
@@ -752,8 +753,14 @@ Module.register("MMM-WeatherMap", {
 	},
 
 	addMarkers: function () {
-		if (!this.map || !this.map.loaded() || this.map.getSource("markers")) {
-			return;
+		if (!this.map) {
+			return "no-map";
+		}
+		if (!this.map.loaded()) {
+			return "not-loaded";
+		}
+		if (this.map.getSource("markers")) {
+			return this.map.getLayer("markers") ? "already-present" : "source-without-layer";
 		}
 		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
 		// Literal color (not a ["get"] expression): v6 warns on some
@@ -786,6 +793,7 @@ Module.register("MMM-WeatherMap", {
 		// Radar layers may land above the markers when frames arrive after
 		// map load — pin markers to the top so the home dot stays opaque.
 		this.map.moveLayer("markers");
+		return "added";
 	},
 
 	frameTileUrl: function (frame) {
@@ -940,14 +948,17 @@ Module.register("MMM-WeatherMap", {
 			// tiles loaded, so switching frames never flashes blank.
 			this.map.setPaintProperty(`rainviewer-${index}`, "raster-opacity", this.config.radarOpacity);
 			// Re-pin markers above the radar on every frame. If the
-			// layer is ever missing (suspected view-swap race), warn
-			// with context and heal — the warning tells us whether
-			// the race is real or the cause lies elsewhere.
+			// layer is ever missing, heal and report why — logged only
+			// when the reason changes, so a persistent cause doesn't
+			// flood the console.
 			if (this.map.getLayer("markers")) {
 				this.map.moveLayer("markers");
 			} else {
-				Log.warn(`[MMM-WeatherMap] markers layer missing on frame ${index} in ${this.view} view — re-adding`);
-				this.addMarkers();
+				const status = this.addMarkers();
+				if (status !== this.lastMarkerStatus) {
+					this.lastMarkerStatus = status;
+					Log.warn(`[MMM-WeatherMap] markers layer missing (addMarkers: ${status}) — re-adding`);
+				}
 			}
 		}
 		this.updateTimeline();

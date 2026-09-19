@@ -116,6 +116,21 @@ describe("showFrame", () => {
 		assert.equal(c.frameIndex, 3);
 	});
 
+	it("reports why marker setup no-ops", () => {
+		assert.equal(def.addMarkers.call(ctx({ map: null })), "no-map");
+		assert.equal(def.addMarkers.call(ctx({ map: { loaded: () => false } })), "not-loaded");
+		const present = ctx({
+			map: { loaded: () => true, getSource: () => ({}), getLayer: () => ({}) },
+			config: { markers: [] }
+		});
+		assert.equal(def.addMarkers.call(present), "already-present");
+		const orphaned = ctx({
+			map: { loaded: () => true, getSource: () => ({}), getLayer: () => undefined },
+			config: { markers: [] }
+		});
+		assert.equal(def.addMarkers.call(orphaned), "source-without-layer");
+	});
+
 	it("warns and re-adds a swap-lost marker layer on the next frame", () => {
 		const map = mapStub();
 		map.getLayer = () => undefined;
@@ -124,7 +139,10 @@ describe("showFrame", () => {
 		const realLog = global.Log;
 		global.Log = { warn: (message) => warned.push(message) };
 		const c = ctx({ frames: framesFixture(), map, view: "precip" });
-		c.addMarkers = () => added.push(true);
+		c.addMarkers = () => {
+			added.push(true);
+			return "source-without-layer";
+		};
 		try {
 			def.showFrame.call(c, 3, { prev: 1 });
 		} finally {
@@ -132,7 +150,7 @@ describe("showFrame", () => {
 		}
 		assert.deepEqual(added, [true]);
 		assert.equal(warned.length, 1);
-		assert.match(warned[0], /markers layer missing on frame 3 in precip view/);
+		assert.match(warned[0], /markers layer missing \(addMarkers: source-without-layer\)/);
 		assert.deepEqual(map.calls.paint, [
 			["rainviewer-1", "raster-opacity", 0],
 			["rainviewer-3", "raster-opacity", 0.45]
