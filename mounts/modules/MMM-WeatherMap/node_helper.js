@@ -11,6 +11,11 @@ const grib2 = require("./grib2");
  * component — tiny over the socket. */
 const WIND_FIELD_SPAN = 320;
 const WIND_FIELD_STRIDE = 8;
+/* Continental grid: the full 1799x1059 domain in 40x40 nodes
+ * (39 steps must fit: row stride 27 covers 1053, col stride 46
+ * covers 1794). ~135 km/node — synoptic context, not detail. */
+const CONUS_STRIDE_ROW = 27;
+const CONUS_STRIDE_COL = 46;
 
 module.exports = NodeHelper.create({
 	socketNotificationReceived: function (notification, payload) {
@@ -137,12 +142,13 @@ module.exports = NodeHelper.create({
 	 * browser can bilinear-sample with plain array math (no
 	 * projection code ships to the frontend). Output row 0 is the
 	 * north edge (lat decreases as rows increase) regardless of
-	 * storage order. Pure given decoded arrays — covered by the
-	 * fetchWindFields integration test. */
-	resampleToLatLon: function (message, u, v, nx, ny, originRow, originCol, stride = WIND_FIELD_STRIDE, across = 40) {
-		const cells = (across - 1) * stride;
-		const northwest = grib2.gridToLatLon(message, originRow + cells, originCol);
-		const southeast = grib2.gridToLatLon(message, originRow, originCol + cells);
+	 * storage order. Strides may differ per axis for the continental
+	 * grid. Pure given decoded arrays — covered by integration tests. */
+	resampleToLatLon: function (message, u, v, nx, ny, originRow, originCol, strideRow = WIND_FIELD_STRIDE, strideCol = WIND_FIELD_STRIDE, across = 40) {
+		const rows = (across - 1) * strideRow;
+		const cols = (across - 1) * strideCol;
+		const northwest = grib2.gridToLatLon(message, originRow + rows, originCol);
+		const southeast = grib2.gridToLatLon(message, originRow, originCol + cols);
 		const lat0 = northwest.lat;
 		const dLat = (northwest.lat - southeast.lat) / (across - 1);
 		const lon0 = northwest.lon;
@@ -271,21 +277,13 @@ module.exports = NodeHelper.create({
 		return { message: u.message, u: u.values, v: v.values };
 	},
 
-	/* Resample decoded components onto the shared lat/lon window. */
+	/* Resample decoded components onto both lat/lon windows: the fine
+	 * regional grid around the requested point plus the coarse
+	 * continental grid spanning the domain. Same messages, ~2x the
+	 * payload, still trivial. */
 	resampleHour: function (components, originRow, originCol, time) {
 		const dims = grib2.gridDimensions(components.message);
-		const field = this.resampleToLatLon(
-			components.message,
-			components.u,
-			components.v,
-			dims.nx,
-			dims.ny,
-			originRow,
-			originCol
-		);
-		return {
-			time,
-			units: "m/s",
+		const pack = (field) => ({
 			nx: field.nx,
 			ny: field.ny,
 			lat0: field.lat0,
@@ -294,6 +292,34 @@ module.exports = NodeHelper.create({
 			dLon: field.dLon,
 			u: Array.from(field.u),
 			v: Array.from(field.v)
+		});
+		return {
+			time,
+			units: "m/s",
+			regional: pack(
+				this.resampleToLatLon(
+					components.message,
+					components.u,
+					components.v,
+					dims.nx,
+					dims.ny,
+					originRow,
+					originCol
+				)
+			),
+			continental: pack(
+				this.resampleToLatLon(
+					components.message,
+					components.u,
+					components.v,
+					dims.nx,
+					dims.ny,
+					0,
+					0,
+					CONUS_STRIDE_ROW,
+					CONUS_STRIDE_COL
+				)
+			)
 		};
 	},
 
@@ -350,7 +376,8 @@ module.exports = NodeHelper.create({
 	},
 
 	/* Home wind at the field nearest now (for the startup log only —
-	 * the badge reads obs, the particles read their own hours). */
+	 * the badge reads obs, the particles read their own hours).
+	 * Samples the regional grid. */
 	homeSample: function (fields, lat, lon) {
 		const now = Date.now();
 		let best = fields[0];
@@ -359,10 +386,11 @@ module.exports = NodeHelper.create({
 				best = field;
 			}
 		}
-		const r = (best.lat0 - lat) / best.dLat;
-		const c = (lon - best.lon0) / best.dLon;
-		const u = grib2.bilinearSample(best.u, best.nx, best.ny, r, c);
-		const v = grib2.bilinearSample(best.v, best.nx, best.ny, r, c);
+		const grid = best.regional;
+		const r = (grid.lat0 - lat) / grid.dLat;
+		const c = (lon - grid.lon0) / grid.dLon;
+		const u = grib2.bilinearSample(grid.u, grid.nx, grid.ny, r, c);
+		const v = grib2.bilinearSample(grid.v, grid.nx, grid.ny, r, c);
 		return {
 			speed: Math.hypot(u, v),
 			direction: Math.round(((Math.atan2(-u, -v) * 180) / Math.PI + 360) % 360),

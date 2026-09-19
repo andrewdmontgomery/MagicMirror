@@ -238,20 +238,36 @@ describe("cycleIndex", () => {
 	});
 });
 
+describe("resampleToLatLon", () => {
+	const fs = require("node:fs");
+	const grib2 = require("../../grib2.js");
+
+	it("covers the domain continentally at coarse tolerance", () => {
+		const ugrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "ugrd-sample.grb"));
+		const vgrd = fs.readFileSync(path.join(MODULE_DIR, "tests", "fixtures", "vgrd-sample.grb"));
+		const um = grib2.readMessage(ugrd);
+		const u = grib2.unpackSimple(um);
+		const vm = grib2.readMessage(vgrd);
+		const v = grib2.unpackSimple(vm);
+		const grid = helper.resampleToLatLon(um, u, v, 1799, 1059, 0, 0, 27, 46);
+		assert.equal(grid.nx, 40);
+		assert.equal(grid.ny, 40);
+		assert.ok(grid.lat0 > 47 && grid.lat0 < 52, `lat0 ${grid.lat0}`);
+		assert.ok(grid.lon0 < -125 && grid.lon0 > -145, `lon0 ${grid.lon0}`);
+		// Coarse smoothing: home within 2 m/s of the direct sample.
+		const homeR = Math.round((grid.lat0 - 44.848) / grid.dLat);
+		const homeC = Math.round((-93.043 - grid.lon0) / grid.dLon);
+		assert.ok(Math.abs(Math.hypot(grid.u[homeR * 40 + homeC], grid.v[homeR * 40 + homeC]) - 3.09) < 2.0);
+	});
+});
+
 describe("homeSample", () => {
 	it("picks the field nearest now and reads home", () => {
 		const now = Date.now();
 		const iso = (deltaHours) => new Date(now + deltaHours * 3600 * 1000).toISOString();
 		const flat = (u, v) => ({
 			time: iso(0),
-			nx: 2,
-			ny: 2,
-			lat0: 3,
-			lon0: 0,
-			dLat: 1,
-			dLon: 1,
-			u: [u, u, u, u],
-			v: [v, v, v, v]
+			regional: { nx: 2, ny: 2, lat0: 3, lon0: 0, dLat: 1, dLon: 1, u: [u, u, u, u], v: [v, v, v, v] }
 		});
 		const fields = [
 			{ ...flat(0, 0), time: iso(-3) },
@@ -307,14 +323,24 @@ describe("fetchWindFields", () => {
 		assert.equal(times[16], "2026-09-19T15:00:00.000Z");
 		for (const field of fields) {
 			assert.equal(field.units, "m/s");
-			assert.equal(field.nx, 40);
-			assert.equal(field.u.length, 1600);
+			for (const grid of [field.regional, field.continental]) {
+				assert.equal(grid.nx, 40);
+				assert.equal(grid.ny, 40);
+				assert.equal(grid.u.length, 1600);
+				assert.equal(grid.v.length, 1600);
+				assert.ok(grid.dLat > 0 && grid.dLon > 0);
+			}
 		}
-		// Home node matches the cfgrib cross-check (3.09 m/s).
-		const first = fields[0];
+		// Regional home node matches the cfgrib cross-check (3.09 m/s).
+		const first = fields[0].regional;
 		const homeR = Math.round((first.lat0 - 44.848) / first.dLat);
 		const homeC = Math.round((-93.043 - first.lon0) / first.dLon);
 		assert.ok(Math.abs(Math.hypot(first.u[homeR * 40 + homeC], first.v[homeR * 40 + homeC]) - 3.09) < 1.0);
+		// Continental grid spans the domain: north edge near 49,
+		// west edge near -134.
+		const conus = fields[0].continental;
+		assert.ok(conus.lat0 > 47 && conus.lat0 < 52, `conus lat0 ${conus.lat0}`);
+		assert.ok(conus.lon0 < -125 && conus.lon0 > -145, `conus lon0 ${conus.lon0}`);
 	});
 
 	it("skips failed hours and still serves the rest", async () => {
