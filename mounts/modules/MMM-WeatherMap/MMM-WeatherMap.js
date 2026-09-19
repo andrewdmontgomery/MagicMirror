@@ -1030,6 +1030,19 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
+	/* Glide ticker: repaints just the progress fill ten times a
+	 * second so it sweeps continuously between frame swaps. Only
+	 * ever runs while playing — a ticker on a paused view is what
+	 * made stopped timelines creep. */
+	startProgressTicker: function () {
+		if (this.progressTimer || !this.isPlaying()) {
+			return;
+		}
+		this.progressTimer = setInterval(() => {
+			this.paintProgress();
+		}, 100);
+	},
+
 	restartAnimation: function () {
 		if (this.frameTimer) {
 			clearInterval(this.frameTimer);
@@ -1039,11 +1052,6 @@ Module.register("MMM-WeatherMap", {
 			clearInterval(this.progressTimer);
 			this.progressTimer = null;
 		}
-		// Glide ticker: repaints just the progress fill ten times a
-		// second so it sweeps continuously between frame swaps.
-		this.progressTimer = setInterval(() => {
-			this.paintProgress();
-		}, 100);
 		if (this.isWindView()) {
 			this.restartWindAnimation();
 			return;
@@ -1059,6 +1067,7 @@ Module.register("MMM-WeatherMap", {
 		if (!this.isPlaying()) {
 			return;
 		}
+		this.startProgressTicker();
 		this.frameTimer = setInterval(() => {
 			// Re-attempt layer creation every tick: layer setup gates
 			// on style readiness, and addRadarLayer is idempotent via
@@ -1103,6 +1112,7 @@ Module.register("MMM-WeatherMap", {
 		if (!this.isPlaying()) {
 			return;
 		}
+		this.startProgressTicker();
 		this.frameTimer = setInterval(() => {
 			this.windIndex = (this.windIndex + 1) % slots.length;
 			if (this.windIndex === 0) {

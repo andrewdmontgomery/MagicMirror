@@ -85,6 +85,41 @@ describe("scrubTo", () => {
 		assert.equal(c.frameTimer, undefined);
 	});
 
+	it("runs the glide ticker only while playing", () => {
+		const started = [];
+		const realSetInterval = global.setInterval;
+		global.setInterval = (fn) => {
+			started.push(fn);
+			return started.length;
+		};
+		try {
+			const paused = ctx({ view: "precip", playing: { precip: false, wind: true } });
+			def.startProgressTicker.call(paused);
+			assert.equal(paused.progressTimer, undefined);
+			const playing = ctx({ view: "precip", playing: { precip: true, wind: true } });
+			def.startProgressTicker.call(playing);
+			def.startProgressTicker.call(playing);
+			assert.equal(playing.progressTimer, 1);
+			assert.equal(started.length, 1);
+		} finally {
+			global.setInterval = realSetInterval;
+		}
+	});
+
+	it("leaves paused views timerless on restart", () => {
+		const c = ctx({
+			view: "precip",
+			frames: framesFixture(),
+			playing: { precip: false, wind: true },
+			map: null,
+			frameTimer: undefined,
+			progressTimer: undefined
+		});
+		def.restartAnimation.call(c);
+		assert.equal(c.frameTimer, undefined);
+		assert.equal(c.progressTimer, undefined);
+	});
+
 	it("keeps play state per view", () => {
 		const c = ctx({ view: "precip", playing: { precip: false, wind: true } });
 		assert.equal(def.isPlaying.call(c), false);
