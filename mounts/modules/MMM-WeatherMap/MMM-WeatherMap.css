@@ -68,19 +68,14 @@
 	pointer-events: none;
 }
 
-.vector-wind-badge {
-	width: 58px;
-	height: 58px;
-	border-radius: 50%;
-	background: rgba(0, 0, 0, 0.45);
-	-webkit-backdrop-filter: blur(10px);
-	backdrop-filter: blur(10px);
-	border: 2px solid rgba(255, 255, 255, 0.9);
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	color: #fff;
+.vector-wind-badge svg {
+	display: block;
+}
+
+/* SVG readout text: white over the opaque callout fill. */
+.vector-wind-badge text {
+	fill: #fff;
+	font-family: inherit;
 }
 
 .vector-wind-badge-dir {
@@ -92,23 +87,12 @@
 .vector-wind-badge-speed {
 	font-size: 19px;
 	font-weight: 800;
-	line-height: 1.1;
 }
 
 .vector-wind-badge-unit {
 	font-size: 8px;
 	font-weight: 700;
 	letter-spacing: 0.5px;
-}
-
-.vector-wind-tail {
-	width: 10px;
-	height: 10px;
-	margin-top: -5px;
-	background: rgba(0, 0, 0, 0.45);
-	border-right: 2px solid rgba(255, 255, 255, 0.9);
-	border-bottom: 2px solid rgba(255, 255, 255, 0.9);
-	transform: rotate(45deg);
 }
 
 /* Particle streak canvas: above the basemap, below pills/controls. */

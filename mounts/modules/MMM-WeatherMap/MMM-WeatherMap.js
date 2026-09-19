@@ -490,14 +490,29 @@ Module.register("MMM-WeatherMap", {
 		const badge = document.createElement("div");
 		badge.className = "vector-wind-badge";
 		element.appendChild(badge);
-		const tail = document.createElement("div");
-		tail.className = "vector-wind-tail";
-		element.appendChild(tail);
 		this.windBadge = badge;
 		this.updateWindBadge();
-		this.windMarker = new this.maplibre.Marker({ element, anchor: "bottom", offset: [0, -4] })
+		// The tail tip hovers a short distance above the marker dot —
+		// it points at the location, never touching it.
+		this.windMarker = new this.maplibre.Marker({ element, anchor: "bottom", offset: [0, -14] })
 			.setLngLat([home.lng !== undefined ? home.lng : this.config.lon, home.lat !== undefined ? home.lat : this.config.lat])
 			.addTo(this.map);
+	},
+
+	/* Single-path SVG callout: a complete circle with a triangular tail
+	 * pointing down, filled opaque so no map or particles show through.
+	 * One path (not circle-plus-triangle) so the white outline flows
+	 * unbroken around both. Geometry: circle center (33,31) r=29, tail
+	 * from the (25,55)-(41,55) chord down to the (33,70) tip. */
+	windBadgeSvg: function (direction, speed, unit) {
+		return (
+			'<svg viewBox="0 0 66 72" width="66" height="72" aria-hidden="true">' +
+			'<path d="M25,55 L33,70 L41,55 A29,29 0 1 0 25,55 Z" fill="#0d3a56" stroke="rgba(255,255,255,0.9)" stroke-width="2"/>' +
+			`<text class="vector-wind-badge-dir" x="33" y="22" text-anchor="middle">${direction}</text>` +
+			`<text class="vector-wind-badge-speed" x="33" y="43" text-anchor="middle">${speed}</text>` +
+			`<text class="vector-wind-badge-unit" x="33" y="54" text-anchor="middle">${unit}</text>` +
+			"</svg>"
+		);
 	},
 
 	updateWindBadge: function () {
@@ -507,17 +522,12 @@ Module.register("MMM-WeatherMap", {
 		const slot = this.currentWindSlot();
 		const scale = this.windLegendScale(this.config.units);
 		if (!slot || slot.speed === null || slot.speed === undefined) {
-			this.windBadge.innerHTML =
-				'<div class="vector-wind-badge-dir">–</div>' +
-				`<div class="vector-wind-badge-speed">–</div><div class="vector-wind-badge-unit">${scale.unit}</div>`;
+			this.windBadge.innerHTML = this.windBadgeSvg("–", "–", scale.unit);
 			return;
 		}
 		const direction = this.windCompass16(slot.direction);
 		const speed = Math.round(slot.speed);
-		this.windBadge.innerHTML =
-			`<div class="vector-wind-badge-dir">${direction}</div>` +
-			`<div class="vector-wind-badge-speed">${speed}</div>` +
-			`<div class="vector-wind-badge-unit">${scale.unit.toUpperCase()}</div>`;
+		this.windBadge.innerHTML = this.windBadgeSvg(direction, speed, scale.unit.toUpperCase());
 	},
 
 	currentWindSlot: function () {

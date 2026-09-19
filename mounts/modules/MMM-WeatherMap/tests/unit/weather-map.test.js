@@ -203,6 +203,17 @@ describe("windCompass16", () => {
 	});
 });
 
+describe("windBadgeSvg", () => {
+	it("renders an opaque single-path callout with the readout", () => {
+		const svg = def.windBadgeSvg.call(ctx(), "ENE", 6, "MPH");
+		assert.match(svg, /<path[^>]*fill="#0d3a56"/);
+		assert.match(svg, /<svg[^>]*viewBox="0 0 66 72"/);
+		assert.match(svg, />ENE</);
+		assert.match(svg, />6</);
+		assert.match(svg, />MPH</);
+	});
+});
+
 describe("formatHourLabel", () => {
 	it("labels hours Apple-style without minutes", () => {
 		const pm = Math.floor(new Date(2026, 5, 1, 20, 30).getTime() / 1000);
@@ -311,6 +322,7 @@ describe("wind scrub and badge", () => {
 					windWindow: def.windWindow,
 					currentWindSlot: def.currentWindSlot,
 					updateWindBadge: def.updateWindBadge,
+					windBadgeSvg: def.windBadgeSvg,
 					updateTimeline: () => {},
 					windLegendScale: def.windLegendScale,
 					windCompass16: def.windCompass16
