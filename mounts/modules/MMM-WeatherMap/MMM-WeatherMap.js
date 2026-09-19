@@ -65,7 +65,7 @@ Module.register("MMM-WeatherMap", {
 		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
 		this.wind = null;
 		this.windIndex = 0;
-		this.windMarker = null;
+		this.windCallout = null;
 		this.windBadge = null;
 		this.particles = [];
 		this.particleRaf = null;
@@ -316,8 +316,23 @@ Module.register("MMM-WeatherMap", {
 			particles.className = "vector-particles";
 			mapDiv.appendChild(particles);
 			this.particleCanvas = particles;
+			// Location callout: a plain overlay sibling (not a map marker)
+			// so it stacks above the particle canvas — streaks never
+			// paint over any part of the circle. Repositioned from the
+			// map on every move via positionWindCallout().
+			const callout = document.createElement("div");
+			callout.className = "vector-wind-marker";
+			const badge = document.createElement("div");
+			badge.className = "vector-wind-badge";
+			callout.appendChild(badge);
+			mapDiv.appendChild(callout);
+			this.windCallout = callout;
+			this.windBadge = badge;
+			this.updateWindBadge();
 		} else {
 			this.particleCanvas = null;
+			this.windCallout = null;
+			this.windBadge = null;
 		}
 
 		if (this.config.showTimeline) {
@@ -335,7 +350,7 @@ Module.register("MMM-WeatherMap", {
 
 	renderMapView: function (mapDiv) {
 		this.stopParticles();
-		this.windMarker = null;
+		this.windCallout = null;
 		this.windBadge = null;
 		if (this.map) {
 			this.map.remove();
@@ -374,7 +389,9 @@ Module.register("MMM-WeatherMap", {
 			this.applyPosition();
 			this.restartAnimation();
 			if (this.isWindView()) {
-				this.addWindMarker();
+				this.positionWindCallout();
+				this.map.on("move", () => this.positionWindCallout());
+				this.map.on("resize", () => this.positionWindCallout());
 				this.startParticles();
 			}
 		});
@@ -474,41 +491,45 @@ Module.register("MMM-WeatherMap", {
 		return legend;
 	},
 
-	/* Apple-style location callout: a small circle with the compass
-	 * abbreviation over the current wind speed, pinned to the home
-	 * marker with a tail pointer — like the ESE / 11 MPH callout on
-	 * the macOS wind map. A real MapLibre Marker (not an overlay div)
-	 * so it tracks pan and zoom exactly. */
-	addWindMarker: function () {
-		if (!this.map || this.windMarker) {
-			return;
-		}
+	/* Home coordinates for the wind callout: the first marker, falling
+	 * back to the configured center. Pure — unit-tested. */
+	homeLngLat: function () {
 		const markers = Array.isArray(this.config.markers) ? this.config.markers : [];
-		const home = markers[0] || { lat: this.config.lat, lng: this.config.lon };
-		const element = document.createElement("div");
-		element.className = "vector-wind-marker";
-		const badge = document.createElement("div");
-		badge.className = "vector-wind-badge";
-		element.appendChild(badge);
-		this.windBadge = badge;
-		this.updateWindBadge();
-		// The tail tip hovers a short distance above the marker dot —
-		// it points at the location, never touching it.
-		this.windMarker = new this.maplibre.Marker({ element, anchor: "bottom", offset: [0, -14] })
-			.setLngLat([home.lng !== undefined ? home.lng : this.config.lon, home.lat !== undefined ? home.lat : this.config.lat])
-			.addTo(this.map);
+		const home = markers[0] || {};
+		return [
+			home.lng !== undefined ? home.lng : this.config.lon,
+			home.lat !== undefined ? home.lat : this.config.lat
+		];
 	},
 
-	/* Single-path SVG callout: a complete circle with a triangular tail
-	 * pointing down, filled opaque so no map or particles show through.
-	 * One path (not circle-plus-triangle) so the white outline flows
-	 * unbroken around both. Geometry: circle center (33,31) r=29, tail
-	 * from the (25,55)-(41,55) chord down to the (33,70) tip. */
+	/* Pin the Apple-style location callout above the home marker: the
+	 * compass abbreviation over the current wind speed, like the
+	 * ENE / 6 MPH readout on the macOS wind map. Reprojected from the
+	 * map on every move so it tracks pan and zoom exactly. The tail
+	 * tip hovers a short distance above the marker dot — it points at
+	 * the location, never touching it. */
+	positionWindCallout: function () {
+		if (!this.map || !this.windCallout) {
+			return;
+		}
+		const point = this.map.project(this.homeLngLat());
+		this.windCallout.style.left = `${point.x}px`;
+		this.windCallout.style.top = `${point.y - 14}px`;
+	},
+
+	/* Single-path SVG callout: a complete white-ringed circle with a
+	 * small triangular tail pointing down — the tail reads as part of
+	 * the border extending into a point. Filled opaque with the
+	 * basemap's own water gray (#2C353C, CARTO dark-matter) so no map
+	 * or particles show through. Geometry: circle center (33,31)
+	 * r=29; the tail base points sit exactly ON the circle (75°/105°)
+	 * so the arc joins smoothly and the top renders whole, never
+	 * clipped. */
 	windBadgeSvg: function (direction, speed, unit) {
 		return (
 			'<svg viewBox="0 0 66 72" width="66" height="72" aria-hidden="true">' +
-			'<path d="M25,55 L33,70 L41,55 A29,29 0 1 0 25,55 Z" fill="#0d3a56" stroke="rgba(255,255,255,0.9)" stroke-width="2"/>' +
-			`<text class="vector-wind-badge-dir" x="33" y="22" text-anchor="middle">${direction}</text>` +
+			'<path d="M25.5,59 L33,68 L40.5,59 A29,29 0 1 0 25.5,59 Z" fill="#2C353C" stroke="rgba(255,255,255,0.9)" stroke-width="2" stroke-linejoin="round"/>' +
+			`<text class="vector-wind-badge-dir" x="33" y="23" text-anchor="middle">${direction}</text>` +
 			`<text class="vector-wind-badge-speed" x="33" y="43" text-anchor="middle">${speed}</text>` +
 			`<text class="vector-wind-badge-unit" x="33" y="54" text-anchor="middle">${unit}</text>` +
 			"</svg>"

@@ -206,11 +206,50 @@ describe("windCompass16", () => {
 describe("windBadgeSvg", () => {
 	it("renders an opaque single-path callout with the readout", () => {
 		const svg = def.windBadgeSvg.call(ctx(), "ENE", 6, "MPH");
-		assert.match(svg, /<path[^>]*fill="#0d3a56"/);
+		assert.match(svg, /<path[^>]*fill="#2C353C"/);
 		assert.match(svg, /<svg[^>]*viewBox="0 0 66 72"/);
+		assert.match(svg, /A29,29 0 1 0/);
 		assert.match(svg, />ENE</);
 		assert.match(svg, />6</);
 		assert.match(svg, />MPH</);
+	});
+
+	it("joins the tail to the circle without kinks", () => {
+		// Tail base points must sit ON the r=29 circle around (33,31):
+		// anything inside bows the arc off-center and clips the top.
+		const svg = def.windBadgeSvg.call(ctx(), "N", 1, "MPH");
+		const d = svg.match(/d="M([\d.]+),([\d.]+) L([\d.]+),([\d.]+) L([\d.]+),([\d.]+) A/);
+		assert.ok(d, "expected the tail-then-arc path");
+		[[1, 2], [5, 6]].forEach(([xi, yi]) => {
+			const dist = Math.hypot(Number(d[xi]) - 33, Number(d[yi]) - 31);
+			assert.ok(Math.abs(dist - 29) < 0.1, `base point sits on the circle (got ${dist})`);
+		});
+	});
+});
+
+describe("wind callout positioning", () => {
+	it("prefers the first marker, falling back to the configured center", () => {
+		const withMarker = ctx({ config: { lat: 1, lon: 2, markers: [{ lat: 3, lng: 4 }] } });
+		assert.deepEqual(def.homeLngLat.call(withMarker), [4, 3]);
+		const bare = ctx({ config: { lat: 1, lon: 2 } });
+		assert.deepEqual(def.homeLngLat.call(bare), [2, 1]);
+	});
+
+	it("projects home to pixels with a hover gap above the dot", () => {
+		const callout = { style: {} };
+		const c = ctx({
+			map: { project: ([lng, lat]) => ({ x: lng * 10, y: lat * 10 }) },
+			config: { lat: 10, lon: 20 },
+			windCallout: callout
+		});
+		c.homeLngLat = () => def.homeLngLat.call(c);
+		def.positionWindCallout.call(c);
+		assert.equal(callout.style.left, "200px");
+		assert.equal(callout.style.top, "86px");
+	});
+
+	it("is a no-op before the map or callout exists", () => {
+		def.positionWindCallout.call(ctx({ map: null, windCallout: null }));
 	});
 });
 

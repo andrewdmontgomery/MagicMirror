@@ -61,10 +61,16 @@
  * unit, like Apple's ESE / 11 MPH readout) pinned to the home marker
  * with a tail pointer. Positioned by MapLibre, so no absolute
  * positioning here — just the callout visuals. */
+/* Stacked above the particle canvas (z-index 2) but below the
+ * legend/timeline pills (z-index 5): streaks never cross the callout.
+ * Bottom-center anchored at the projected home point (see
+ * positionWindCallout) via the translate. */
 .vector-wind-marker {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
+	position: absolute;
+	left: 0;
+	top: 0;
+	z-index: 4;
+	transform: translate(-50%, -100%);
 	pointer-events: none;
 }
 
