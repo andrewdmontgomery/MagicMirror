@@ -396,6 +396,79 @@ describe("wind scrub and badge", () => {
 	});
 });
 
+describe("geo-anchored particles", () => {
+	function geoStub() {
+		const calls = { moveTo: [], lineTo: [], unprojected: [] };
+		const ctx2d = {
+			moveTo: (x, y) => calls.moveTo.push([x, y]),
+			lineTo: (x, y) => calls.lineTo.push([x, y]),
+			beginPath: () => {},
+			stroke: () => {},
+			fillRect: () => {}
+		};
+		// Identity-ish projection in stub space: screen = geo * 10.
+		const map = {
+			project: ([lon, lat]) => ({ x: lon * 10, y: lat * 10 }),
+			unproject: ([x, y]) => {
+				calls.unprojected.push([x, y]);
+				return { lng: x / 10, lat: y / 10 };
+			}
+		};
+		return { calls, ctx2d, map };
+	}
+
+	function particleCtx(map, particles) {
+		return {
+			map,
+			particles,
+			config: { units: "imperial" },
+			currentWindSlot: () => ({ direction: 0, speed: 75 }),
+			windLegendScale: def.windLegendScale,
+			windDriftVector: def.windDriftVector,
+			spawnParticle: function (w, h) { return def.spawnParticle.call(this, w, h); }
+		};
+	}
+
+	it("advects geographically and draws elongated streaks", () => {
+		const { calls, ctx2d, map } = geoStub();
+		const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000 }];
+		const c = particleCtx(map, particles);
+		const realRandom = Math.random;
+		Math.random = () => 0.99;
+		try {
+			def.advectParticles.call(c, ctx2d, 400, 400);
+		} finally {
+			Math.random = realRandom;
+		}
+		// From-north at max speed: 2.5px/frame straight down-stub.
+		assert.deepEqual(calls.moveTo, [[10, 20]]);
+		assert.ok(Math.abs(calls.lineTo[0][0] - 10) < 1e-9);
+		assert.ok(Math.abs(calls.lineTo[0][1] - (20 + 2.5 * 1.4)) < 1e-9);
+		assert.ok(Math.abs(particles[0].lon - 1) < 1e-9);
+		assert.ok(Math.abs(particles[0].lat - 2.25) < 1e-9);
+	});
+
+	it("respawns aged-out particles with a fresh lifespan", () => {
+		const { ctx2d, map } = geoStub();
+		const particles = [{ lon: 1, lat: 2, age: 5000, maxAge: 10 }];
+		const c = particleCtx(map, particles);
+		def.advectParticles.call(c, ctx2d, 400, 400);
+		assert.equal(particles[0].age, 0);
+		assert.ok(particles[0].maxAge >= 60 && particles[0].maxAge < 150);
+	});
+
+	it("spawns within the visible canvas", () => {
+		const { calls, map } = geoStub();
+		const c = particleCtx(map, []);
+		const p = def.spawnParticle.call(c, 400, 400);
+		const [x, y] = calls.unprojected[0];
+		assert.ok(x >= 0 && x <= 400);
+		assert.ok(y >= 0 && y <= 400);
+		assert.equal(typeof p.lon, "number");
+		assert.equal(typeof p.lat, "number");
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];

@@ -19,6 +19,10 @@ const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 250;
+/* Trail fade per frame (higher = longer tails) and drawn streak length
+ * as a multiple of the per-frame advection step. */
+const WIND_TRAIL_RETENTION = 0.96;
+const WIND_STREAK_LENGTH = 1.4;
 
 Module.register("MMM-WeatherMap", {
 	defaults: {
@@ -1064,13 +1068,15 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
-	/* Uniform-flow particle overlay: ~250 white streaks advected across
-	 * the map along the current slot's wind vector, with a translucent
-	 * fade for motion-blur trails (not full clears). Runs only in the
-	 * wind view; the HRRR gridded field will replace the uniform vector
-	 * with bilinear sampling at the same call site. */
+	/* Uniform-flow particle overlay: ~250 white streaks advected along
+	 * the current slot's wind vector, with a translucent fade for
+	 * motion-blur trails (not full clears). Particles are anchored
+	 * geographically (lon/lat) and reprojected every frame, so they
+	 * pan and zoom WITH the basemap instead of floating over it.
+	 * Runs only in the wind view; the HRRR gridded field will replace
+	 * the uniform vector with bilinear sampling at the same call site. */
 	startParticles: function () {
-		if (this.particleRaf || !this.particleCanvas || !this.isWindView()) {
+		if (this.particleRaf || !this.particleCanvas || !this.isWindView() || !this.map) {
 			return;
 		}
 		const canvas = this.particleCanvas;
@@ -1109,10 +1115,13 @@ Module.register("MMM-WeatherMap", {
 		this.particles = [];
 	},
 
+	/* Birth a particle at a random on-screen point, stored as lon/lat
+	 * so it sticks to the map. Pure given the map stub — unit-tested. */
 	spawnParticle: function (width, height) {
+		const point = this.map.unproject([Math.random() * width, Math.random() * height]);
 		return {
-			x: Math.random() * width,
-			y: Math.random() * height,
+			lon: point.lng,
+			lat: point.lat,
 			age: 0,
 			maxAge: 60 + Math.floor(Math.random() * 90)
 		};
@@ -1123,7 +1132,7 @@ Module.register("MMM-WeatherMap", {
 		const scale = this.windLegendScale(this.config.units);
 		const drift = this.windDriftVector(slot && slot.direction, slot && slot.speed, scale.max);
 		ctx2d.globalCompositeOperation = "destination-in";
-		ctx2d.fillStyle = "rgba(0, 0, 0, 0.92)";
+		ctx2d.fillStyle = `rgba(0, 0, 0, ${WIND_TRAIL_RETENTION})`;
 		ctx2d.fillRect(0, 0, width, height);
 		ctx2d.globalCompositeOperation = "source-over";
 		ctx2d.strokeStyle = "rgba(255, 255, 255, 0.6)";
@@ -1131,17 +1140,21 @@ Module.register("MMM-WeatherMap", {
 		ctx2d.lineCap = "round";
 		ctx2d.beginPath();
 		this.particles.forEach((p) => {
-			const nextX = p.x + drift.dx;
-			const nextY = p.y + drift.dy;
-			ctx2d.moveTo(p.x, p.y);
-			ctx2d.lineTo(nextX, nextY);
-			p.x = nextX;
-			p.y = nextY;
+			// Reproject every frame: the map may have panned or zoomed
+			// since the last tick, and the particle follows the basemap.
+			const screen = this.map.project([p.lon, p.lat]);
+			const nextX = screen.x + drift.dx;
+			const nextY = screen.y + drift.dy;
+			ctx2d.moveTo(screen.x, screen.y);
+			ctx2d.lineTo(screen.x + drift.dx * WIND_STREAK_LENGTH, screen.y + drift.dy * WIND_STREAK_LENGTH);
+			const next = this.map.unproject([nextX, nextY]);
+			p.lon = next.lng;
+			p.lat = next.lat;
 			p.age += 1;
-			if (p.age > p.maxAge || p.x < 0 || p.x > width || p.y < 0 || p.y > height || Math.random() < 0.01) {
+			if (p.age > p.maxAge || nextX < 0 || nextX > width || nextY < 0 || nextY > height || Math.random() < 0.01) {
 				const fresh = this.spawnParticle(width, height);
-				p.x = fresh.x;
-				p.y = fresh.y;
+				p.lon = fresh.lon;
+				p.lat = fresh.lat;
 				p.age = 0;
 				p.maxAge = fresh.maxAge;
 			}
