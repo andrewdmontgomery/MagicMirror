@@ -117,6 +117,214 @@ describe("showFrame", () => {
 	});
 });
 
+describe("windLegendScale", () => {
+	it("matches Apple's 0/25/50/75 mph in imperial", () => {
+		assert.deepEqual(def.windLegendScale.call(ctx(), "imperial"), {
+			unit: "mph",
+			max: 75,
+			ticks: [75, 50, 25, 0]
+		});
+	});
+
+	it("uses rounded km/h equivalents in metric", () => {
+		assert.deepEqual(def.windLegendScale.call(ctx(), "metric"), {
+			unit: "km/h",
+			max: 120,
+			ticks: [120, 80, 40, 0]
+		});
+	});
+});
+
+describe("windWindow", () => {
+	function hourlyFixture() {
+		// 24 hourly slots starting at a round epoch hour.
+		const base = 1_800_000_000 - (1_800_000_000 % 3600);
+		const time = [];
+		const speed = [];
+		const direction = [];
+		for (let i = 0; i < 24; i += 1) {
+			time.push(base + i * 3600);
+			speed.push(10 + i);
+			direction.push(90);
+		}
+		return { time, speed, direction, base };
+	}
+
+	it("slices past and future hours around the anchor", () => {
+		const { time, speed, direction, base } = hourlyFixture();
+		const nowSec = base + 10 * 3600;
+		const window = def.windWindow.call(ctx(), { time, speed, direction }, nowSec, 4, 12);
+		assert.equal(window.length, 4 + 1 + 12);
+		assert.equal(window[0].time, base + 6 * 3600);
+		assert.equal(window[4].isNow, true);
+		assert.equal(window[4].speed, 20);
+	});
+
+	it("clamps at the series edges", () => {
+		const { time, speed, direction, base } = hourlyFixture();
+		const window = def.windWindow.call(ctx(), { time, speed, direction }, base + 3600, 4, 12);
+		assert.equal(window[0].time, base);
+		assert.equal(window.length, 1 + 1 + 12);
+	});
+
+	it("returns empty for missing hourly data", () => {
+		assert.deepEqual(def.windWindow.call(ctx(), null, 0, 4, 12), []);
+		assert.deepEqual(def.windWindow.call(ctx(), { time: [] }, 0, 4, 12), []);
+	});
+});
+
+describe("windDriftVector", () => {
+	it("blows southward when the wind is from the north", () => {
+		const v = def.windDriftVector.call(ctx(), 0, 30, 75);
+		assert.ok(Math.abs(v.dx) < 1e-9);
+		assert.ok(v.dy > 0);
+	});
+
+	it("blows westward when the wind is from the east", () => {
+		const v = def.windDriftVector.call(ctx(), 90, 30, 75);
+		assert.ok(v.dx < 0);
+		assert.ok(Math.abs(v.dy) < 1e-9);
+	});
+
+	it("scales magnitude with speed", () => {
+		const slow = def.windDriftVector.call(ctx(), 180, 5, 75);
+		const fast = def.windDriftVector.call(ctx(), 180, 75, 75);
+		const mag = (v) => Math.hypot(v.dx, v.dy);
+		assert.ok(mag(fast) > mag(slow));
+	});
+});
+
+describe("windCompass16", () => {
+	it("maps degrees to 16-point abbreviations", () => {
+		assert.equal(def.windCompass16.call(ctx(), 0), "N");
+		assert.equal(def.windCompass16.call(ctx(), 112.5), "ESE");
+		assert.equal(def.windCompass16.call(ctx(), 270), "W");
+		assert.equal(def.windCompass16.call(ctx(), 360), "N");
+	});
+});
+
+describe("formatHourLabel", () => {
+	it("labels hours Apple-style without minutes", () => {
+		const pm = Math.floor(new Date(2026, 5, 1, 20, 30).getTime() / 1000);
+		const midnight = Math.floor(new Date(2026, 5, 2, 0, 15).getTime() / 1000);
+		const noon = Math.floor(new Date(2026, 5, 2, 12, 0).getTime() / 1000);
+		assert.equal(def.formatHourLabel.call(ctx(), pm), "8PM");
+		assert.equal(def.formatHourLabel.call(ctx(), midnight), "12AM");
+		assert.equal(def.formatHourLabel.call(ctx(), noon), "12PM");
+	});
+});
+
+describe("setView", () => {
+	function viewCtx(view = "precip") {
+		const notified = [];
+		const redrawn = [];
+		return {
+			c: ctx({
+				view,
+				sendNotification: (n, p) => notified.push([n, p]),
+				updateDom: () => redrawn.push(true)
+			}),
+			notified,
+			redrawn
+		};
+	}
+
+	it("rejects unknown views and no-op switches", () => {
+		const { c, notified, redrawn } = viewCtx("precip");
+		assert.equal(def.setView.call(c, "aqi"), false);
+		assert.equal(def.setView.call(c, "precip"), false);
+		assert.deepEqual(notified, []);
+		assert.deepEqual(redrawn, []);
+	});
+
+	it("switches, broadcasts, and redraws", () => {
+		const { c, notified, redrawn } = viewCtx("precip");
+		assert.equal(def.setView.call(c, "wind"), true);
+		assert.equal(c.view, "wind");
+		assert.deepEqual(notified, [["WEATHERMAP_VIEW_CHANGED", { view: "wind" }]]);
+		assert.equal(redrawn.length, 1);
+	});
+
+	it("routes WEATHERMAP_SET_VIEW notifications to setView", () => {
+		const { c } = viewCtx("precip");
+		c.updateDom = () => {};
+		c.sendNotification = () => {};
+		def.notificationReceived.call(c, "WEATHERMAP_SET_VIEW", { view: "wind" });
+		assert.equal(c.view, "wind");
+		def.notificationReceived.call(c, "IRRELEVANT", {});
+		assert.equal(c.view, "wind");
+	});
+});
+
+describe("wind scrub and badge", () => {
+	function winded(overrides = {}) {
+		const base = 1_800_000_000 - (1_800_000_000 % 3600);
+		const time = [];
+		const speed = [];
+		const direction = [];
+		for (let i = 0; i < 24; i += 1) {
+			time.push(base + i * 3600);
+			speed.push(10);
+			direction.push(112.5);
+		}
+		return ctx({
+			view: "wind",
+			config: {
+				radarOpacity: 0.45,
+				animationSpeedMs: 800,
+				windHoursPast: 4,
+				windHoursFuture: 12,
+				units: "imperial"
+			},
+			wind: { hourly: { time, speed, direction } },
+			windIndex: 0,
+			playing: false,
+			windBadge: undefined,
+			...overrides
+		});
+	}
+
+	it("scrubTo clamps ratios to the wind window", () => {
+		const c = winded();
+		def.scrubTo.call(c, -1);
+		assert.equal(c.windIndex, 0);
+		const slots = def.currentWindWindow.call({
+			...c,
+			windWindow: def.windWindow,
+			config: c.config,
+			wind: c.wind
+		});
+		def.scrubTo.call(c, 2);
+		assert.equal(c.windIndex, slots.length - 1);
+	});
+
+	it("showWindFrame updates the badge content", () => {
+		const badge = {};
+		const c = winded({ windBadge: badge });
+		// Pin "now" to the middle of the fixture for a deterministic slot.
+		const realNow = Date.now;
+		Date.now = () => (1_800_000_000 - (1_800_000_000 % 3600) + 10 * 3600) * 1000;
+		try {
+			def.showWindFrame.call(
+				{
+					...c,
+					windWindow: def.windWindow,
+					currentWindSlot: def.currentWindSlot,
+					updateWindBadge: def.updateWindBadge,
+					updateTimeline: () => {},
+					windLegendScale: def.windLegendScale,
+					windCompass16: def.windCompass16
+				},
+				2
+			);
+		} finally {
+			Date.now = realNow;
+		}
+		assert.match(badge.innerHTML, /ESE/);
+		assert.match(badge.innerHTML, /MPH/);
+	});
+});
+
 describe("updateTimeline", () => {
 	it("labels the latest frame Now and older frames by time", () => {
 		const updated = [];

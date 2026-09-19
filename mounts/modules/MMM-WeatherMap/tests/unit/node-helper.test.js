@@ -85,3 +85,51 @@ describe("fetchStyle", () => {
 		assert.deepEqual(sent[0][1], { style: { version: 8, layers: [] } });
 	});
 });
+
+describe("fetchWind", () => {
+	function openMeteoFixture() {
+		return {
+			current: { time: "2026-09-18T14:00", wind_speed_10m: 12.5, wind_direction_10m: 112 },
+			hourly: {
+				time: ["2026-09-18T12:00", "2026-09-18T13:00"],
+				wind_speed_10m: [10.1, 11.2],
+				wind_direction_10m: [100, 110]
+			}
+		};
+	}
+
+	it("maps Open-Meteo current plus hourly to epoch-second slots", async () => {
+		global.fetch = async (url) => {
+			fetchedUrls.push(url);
+			return { ok: true, json: async () => openMeteoFixture() };
+		};
+		await helper.fetchWind({ lat: 44.848, lon: -93.043, units: "imperial" });
+		assert.match(fetchedUrls[0], /api\.open-meteo\.com.*wind_speed_unit=mph/);
+		assert.equal(sent.length, 1);
+		assert.equal(sent[0][0], "WIND_SUMMARY_RESULT");
+		const payload = sent[0][1];
+		assert.equal(payload.units, "imperial");
+		assert.equal(payload.current.speed, 12.5);
+		assert.deepEqual(payload.hourly.speed, [10.1, 11.2]);
+		assert.ok(payload.hourly.time.every((t) => Number.isInteger(t)));
+		assert.ok(payload.hourly.time[1] - payload.hourly.time[0] === 3600);
+	});
+
+	it("requests kmh for metric units", async () => {
+		global.fetch = async (url) => {
+			fetchedUrls.push(url);
+			return { ok: true, json: async () => openMeteoFixture() };
+		};
+		await helper.fetchWind({ lat: 44.848, lon: -93.043, units: "metric" });
+		assert.match(fetchedUrls[0], /wind_speed_unit=kmh/);
+		assert.equal(sent[0][1].units, "metric");
+	});
+
+	it("sends nothing without coordinates", async () => {
+		global.fetch = async () => {
+			throw new Error("fetch must not run without coordinates");
+		};
+		await helper.fetchWind({});
+		assert.equal(sent.length, 0);
+	});
+});
