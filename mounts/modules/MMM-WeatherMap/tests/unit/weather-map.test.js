@@ -1113,7 +1113,7 @@ describe("particle GL layer", () => {
 		def.ensureParticleLayer.call(c);
 		assert.deepEqual(map.calls.added, ["wind-particles"]);
 		assert.deepEqual(map.calls.moved, ["markers"]);
-		assert.equal(c.particles.length, 400);
+		assert.equal(c.particles.length, 800);
 	});
 
 	it("is a no-op outside wind view or when present", () => {

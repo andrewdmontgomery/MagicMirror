@@ -18,7 +18,7 @@ const MAX_RADAR_LAYERS = 64;
 const VIEWS = ["precip", "wind"];
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
-const WIND_PARTICLE_COUNT = 400;
+const WIND_PARTICLE_COUNT = 800;
 /* Drift-rate tune: motion scales with the legend ratio between a
  * calm floor (the field never looks dead, even where data clamps)
  * and the max-scale top. Fixed-length trails make tail length scale
@@ -1789,7 +1789,7 @@ Module.register("MMM-WeatherMap", {
 		// Full clear, never a translucent fade: the map underneath
 		// returns to its exact base color every frame. No residue.
 		ctx2d.clearRect(0, 0, width, height);
-		ctx2d.lineWidth = 2;
+		ctx2d.lineWidth = 1.5;
 		ctx2d.lineCap = "round";
 		ctx2d.lineJoin = "round";
 		if (!Array.isArray(this.ghosts)) {
