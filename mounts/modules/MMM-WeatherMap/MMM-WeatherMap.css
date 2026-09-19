@@ -162,14 +162,21 @@
 	bottom: 10px;
 	z-index: 5;
 	display: flex;
-	gap: 8px;
-	align-items: center;
+	flex-direction: column;
+	gap: 4px;
+	align-items: stretch;
 	background: rgba(0, 0, 0, 0.45);
 	-webkit-backdrop-filter: blur(10px);
 	backdrop-filter: blur(10px);
 	border-radius: 12px;
 	padding: 6px 10px;
 	color: #fff;
+}
+
+.vector-tl-header {
+	display: flex;
+	gap: 8px;
+	align-items: center;
 }
 
 .vector-tl-play {
@@ -184,7 +191,7 @@
 	cursor: pointer;
 }
 
-.vector-tl-main {
+.vector-tl-titles {
 	flex: 1 1 auto;
 	min-width: 0;
 }

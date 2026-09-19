@@ -998,84 +998,89 @@ Module.register("MMM-WeatherMap", {
 		return this.precipTimelineDiv();
 	},
 
-	/* Apple-style wind timeline: play/pause, a "Wind Speed" title with
-	 * the current date, and an hourly track spanning past analyses into
-	 * forecast hours — mirroring the macOS Weather wind map's bottom bar. */
+	/* Timeline track + ticks shared by both views: full-width below
+	 * the header row, so the play button sits above the track with
+	 * the titles (Apple layout), never beside it. */
+	buildTrackNodes: function () {
+		this.timelineTrack = document.createElement("div");
+		this.timelineTrack.className = "vector-tl-track";
+		this.timelineTrack.addEventListener("click", (event) => {
+			const rect = this.timelineTrack.getBoundingClientRect();
+			this.scrubTo((event.clientX - rect.left) / rect.width);
+		});
+
+		this.timelineTicks = document.createElement("div");
+		this.timelineTicks.className = "vector-tl-ticks light";
+	},
+
+	/* Apple-style wind timeline: header row (play + "Wind Speed" title
+	 * with date), then a full-width hourly track spanning past analyses
+	 * into forecast hours — mirroring the macOS Weather wind map. */
 	windTimelineDiv: function () {
 		const timeline = document.createElement("div");
 		timeline.className = "vector-timeline";
+
+		const header = document.createElement("div");
+		header.className = "vector-tl-header";
 
 		this.playButton = document.createElement("button");
 		this.playButton.className = "vector-tl-play";
 		this.playButton.setAttribute("aria-label", "Play or pause wind animation");
 		this.updatePlayButton();
 		this.playButton.addEventListener("click", () => this.togglePlay());
-		timeline.appendChild(this.playButton);
+		header.appendChild(this.playButton);
 
-		const main = document.createElement("div");
-		main.className = "vector-tl-main";
+		const titles = document.createElement("div");
+		titles.className = "vector-tl-titles";
 
 		const title = document.createElement("div");
 		title.className = "vector-tl-label light";
 		title.textContent = "Wind Speed";
-		main.appendChild(title);
+		titles.appendChild(title);
 
 		this.timelineLabel = document.createElement("div");
 		this.timelineLabel.className = "vector-tl-date light";
-		main.appendChild(this.timelineLabel);
+		titles.appendChild(this.timelineLabel);
 
-		this.timelineTrack = document.createElement("div");
-		this.timelineTrack.className = "vector-tl-track";
-		this.timelineTrack.addEventListener("click", (event) => {
-			const rect = this.timelineTrack.getBoundingClientRect();
-			this.scrubTo((event.clientX - rect.left) / rect.width);
-		});
-		main.appendChild(this.timelineTrack);
+		header.appendChild(titles);
+		timeline.appendChild(header);
 
-		this.timelineTicks = document.createElement("div");
-		this.timelineTicks.className = "vector-tl-ticks light";
-		main.appendChild(this.timelineTicks);
+		this.buildTrackNodes();
+		timeline.appendChild(this.timelineTrack);
+		timeline.appendChild(this.timelineTicks);
 
-		timeline.appendChild(main);
 		this.buildTimelineTicks();
 		this.updateTimeline();
 		return timeline;
 	},
 
-	/* Apple-style history timeline: play/pause, current frame time, and a
-	 * scrubbable track. Free RainViewer has past frames only, so this
-	 * covers history, not forecast. */
+	/* Apple-style history timeline: header row (play + current frame
+	 * time), then a full-width scrubbable track. Free RainViewer has
+	 * past frames only, so this covers history, not forecast. */
 	precipTimelineDiv: function () {
 		const timeline = document.createElement("div");
 		timeline.className = "vector-timeline";
+
+		const header = document.createElement("div");
+		header.className = "vector-tl-header";
 
 		this.playButton = document.createElement("button");
 		this.playButton.className = "vector-tl-play";
 		this.playButton.setAttribute("aria-label", "Play or pause radar animation");
 		this.updatePlayButton();
 		this.playButton.addEventListener("click", () => this.togglePlay());
-		timeline.appendChild(this.playButton);
-
-		const main = document.createElement("div");
-		main.className = "vector-tl-main";
+		header.appendChild(this.playButton);
 
 		this.timelineLabel = document.createElement("div");
 		this.timelineLabel.className = "vector-tl-label light";
-		main.appendChild(this.timelineLabel);
+		header.appendChild(this.timelineLabel);
 
-		this.timelineTrack = document.createElement("div");
-		this.timelineTrack.className = "vector-tl-track";
-		this.timelineTrack.addEventListener("click", (event) => {
-			const rect = this.timelineTrack.getBoundingClientRect();
-			this.scrubTo((event.clientX - rect.left) / rect.width);
-		});
-		main.appendChild(this.timelineTrack);
+		timeline.appendChild(header);
 
-		this.timelineTicks = document.createElement("div");
-		this.timelineTicks.className = "vector-tl-ticks light";
-		main.appendChild(this.timelineTicks);
+		this.buildTrackNodes();
+		timeline.appendChild(this.timelineTrack);
+		timeline.appendChild(this.timelineTicks);
 
-		timeline.appendChild(main);
 		this.buildTimelineTicks();
 		this.updateTimeline();
 		return timeline;
