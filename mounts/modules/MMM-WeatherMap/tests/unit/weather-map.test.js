@@ -242,7 +242,7 @@ describe("showFrame", () => {
 });
 
 describe("windLegendScale", () => {
-	it("matches Apple's 0/25/50/75 mph in imperial", () => {
+	it("uses 0/25/50/75 mph in imperial", () => {
 		assert.deepEqual(def.windLegendScale.call(ctx(), "imperial"), {
 			unit: "mph",
 			max: 75,
@@ -423,7 +423,7 @@ describe("wind callout positioning", () => {
 });
 
 describe("formatHourLabel", () => {
-	it("labels hours Apple-style without minutes", () => {
+	it("labels hours without minutes", () => {
 		const pm = Math.floor(new Date(2026, 5, 1, 20, 30).getTime() / 1000);
 		const midnight = Math.floor(new Date(2026, 5, 2, 0, 15).getTime() / 1000);
 		const noon = Math.floor(new Date(2026, 5, 2, 12, 0).getTime() / 1000);

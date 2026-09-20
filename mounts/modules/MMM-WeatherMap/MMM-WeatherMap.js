@@ -342,8 +342,8 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
-	/* Wind legend scale, Apple-style: numeric ticks over a speed gradient.
-	 * Imperial matches Apple's 0/25/50/75 mph; metric is the rounded
+	/* Wind legend scale: numeric ticks over a speed gradient.
+	 * Imperial uses 0/25/50/75 mph; metric is the rounded
 	 * km/h equivalent. Pure — unit-tested. */
 	windLegendScale: function (units) {
 		if (units === "metric") {
@@ -798,7 +798,7 @@ Module.register("MMM-WeatherMap", {
 			onRemove: function () {}
 		};
 	},
-	/* Apple-style precipitation legend. Gradient stops sampled from
+	/* Precipitation legend. Gradient stops sampled from
 	 * RainViewer's Universal Blue scheme (color scheme 2), so the swatch
 	 * means the same thing as the radar cells. */
 	legendDiv: function () {
@@ -817,7 +817,7 @@ Module.register("MMM-WeatherMap", {
 		return legend;
 	},
 
-	/* Apple-style wind legend (see the macOS Weather wind map): a dark
+	/* Wind legend: a dark
 	 * pill titled "Wind (mph"/"km/h)" with a vertical speed gradient and
 	 * numeric ticks — the same layout as the precip legend, so the two
 	 * views feel like one map. */
@@ -846,9 +846,9 @@ Module.register("MMM-WeatherMap", {
 		];
 	},
 
-	/* Pin the Apple-style location callout above the home marker: the
-	 * compass abbreviation over the current wind speed, like the
-	 * ENE / 6 MPH readout on the macOS wind map. Reprojected from the
+	/* Pin the location callout above the home marker: the
+	 * compass abbreviation over the current wind speed, like an
+	 * ENE / 6 MPH readout. Reprojected from the
 	 * map on every move so it tracks pan and zoom exactly. The tail
 	 * tip hovers a short distance above the marker dot — it points at
 	 * the location, never touching it. */
@@ -1333,7 +1333,7 @@ Module.register("MMM-WeatherMap", {
 
 	/* Timeline track + ticks shared by both views: full-width below
 	 * the header row, so the play button sits above the track with
-	 * the titles (Apple layout), never beside it. */
+	 * the titles, never beside it. */
 	buildTrackNodes: function () {
 		this.timelineTrack = document.createElement("div");
 		this.timelineTrack.className = "vector-tl-track";
@@ -1346,9 +1346,9 @@ Module.register("MMM-WeatherMap", {
 		this.timelineTicks.className = "vector-tl-ticks light";
 	},
 
-	/* Apple-style wind timeline: header row (play + "Wind Speed" title
+	/* Wind timeline: header row (play + "Wind Speed" title
 	 * with date), then a full-width hourly track spanning past analyses
-	 * into forecast hours — mirroring the macOS Weather wind map. */
+	 * into forecast hours. */
 	windTimelineDiv: function () {
 		const timeline = document.createElement("div");
 		timeline.className = "vector-timeline";
@@ -1435,8 +1435,8 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
-	/* Hour-only label for the wind track ("8PM", "12AM") — matches the
-	 * macOS wind timeline, where hourly slots are too dense for minutes. */
+	/* Hour-only label for the wind track ("8PM", "12AM") — hourly slots
+	 * are too dense for minutes. */
 	formatHourLabel: function (unixSeconds) {
 		const date = new Date(unixSeconds * 1000);
 		const hours = date.getHours();
@@ -1479,7 +1479,7 @@ Module.register("MMM-WeatherMap", {
 		});
 	},
 
-	/* Wind label policy (Apple-style): every hour gets a tick mark,
+	/* Wind label policy: every hour gets a tick mark,
 	 * but only even hours get text — plus always Now, with even-hour
 	 * labels neighboring Now suppressed so nothing collides. Pure. */
 	windTickLabels: function (slots) {

@@ -2,7 +2,7 @@
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** Apple-style animated wind particles (dots with motion-blur trails advected by the local wind field) on MMM-WeatherMap, with the timeline extended to cover past analyses plus forecast hours.
+**Goal:** Animated wind particles (dots with motion-blur trails advected by the local wind field) on MMM-WeatherMap, with the timeline extended to cover past analyses plus forecast hours.
 
 **Architecture:** `node_helper.js` fetches HRRR 10m U/V subsets from AWS open data on a 6-hour cadence, decodes the GRIB2 simple packing in pure JS, and ships a lat/lon-registered U/V grid to the front-end; the front-end advects canvas particles through bilinear interpolation, rendered as a MapLibre custom layer (or synced overlay canvas) beneath the markers and above the radar.
 

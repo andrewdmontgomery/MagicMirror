@@ -1,6 +1,6 @@
 /* MMM-HourlyStrip — hourly strip in the mirror's native theme:
  * transparent background, inherited font, theme text tones.
- * Layout mirrors the Apple Weather hourly strip; chrome matches
+ * Layout follows a standard hourly strip; chrome matches
  * the other modules (cf. MMM-WindCompass: no card, subtle dividers). */
 
 .hourly-strip-module {
@@ -79,7 +79,7 @@
 }
 
 .hourly-icon-svg,
-.apple-icon-svg {
+.glyph-icon-svg {
 	width: 58px;
 	height: 46px;
 	display: block;

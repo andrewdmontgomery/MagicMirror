@@ -8,7 +8,7 @@
 	position: relative;
 }
 
-/* Apple-style precipitation legend (colors = RainViewer Universal Blue). */
+/* Precipitation legend (colors = RainViewer Universal Blue). */
 .vector-legend {
 	position: absolute;
 	top: 10px;
@@ -53,14 +53,14 @@
 
 /* Wind legend: numeric speed ticks over a sky-to-white gradient
  * (0 at the bottom, max white at the top) — faster reads whiter,
- * matching the macOS Weather wind-map scale. The bottom anchors at
+ * matching the reference wind-map scale. The bottom anchors at
  * the old 25 mph blue so calm air never reads navy. */
 .vector-legend-bar-wind {
 	background: linear-gradient(to top, rgb(81, 177, 222) 0%, #7fd4f2 55%, #e8f6fd 100%);
 }
 
 /* Wind location callout: a small circle (compass point over speed +
- * unit, like Apple's ESE / 11 MPH readout) pinned to the home marker
+ * unit, e.g. ESE / 11 MPH readout) pinned to the home marker
  * with a tail pointer. Positioned by MapLibre, so no absolute
  * positioning here — just the callout visuals. */
 /* Stacked above the particle canvas (z-index 2) but below the
@@ -145,7 +145,7 @@
 	opacity: 0.85;
 }
 
-/* Apple-style history timeline (past frames only). */
+/* History timeline (past frames only). */
 .vector-timeline {
 	position: absolute;
 	left: 10px;
@@ -198,7 +198,7 @@
 	white-space: nowrap;
 }
 
-/* Apple-style scrub track: a smooth progress fill that glides
+/* Scrub track: a smooth progress fill that glides
  * between hourly steps, one tick mark per frame, and sparse labels
  * below (every even hour + Now on the wind view). */
 .vector-tl-track {

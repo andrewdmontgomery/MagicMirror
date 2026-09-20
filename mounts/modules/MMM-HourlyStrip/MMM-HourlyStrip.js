@@ -1,4 +1,4 @@
-/* MMM-HourlyStrip — Apple Weather style hourly card.
+/* MMM-HourlyStrip — hourly forecast card.
  * Front-end: builds a 24h scrollable strip from Open-Meteo data,
  * with Sunrise/Sunset columns interleaved chronologically.
  * Icons are hand-built SVGs (white clouds, yellow sun, blue rain)
@@ -58,7 +58,7 @@ function hourlyCloudyIcon() {
 }
 
 function hourlyRainIcon(precipMm) {
-	// Slash count tracks forecast intensity (mm/hr), like Apple:
+	// Slash count tracks forecast intensity (mm/hr):
 	// trace/drizzle = 1, light = 2, moderate+ = 3.
 	const mm = Number(precipMm) || 0;
 	const count = mm >= 0.5 ? 3 : mm >= 0.1 ? 2 : 1;
@@ -197,10 +197,10 @@ Module.register("MMM-HourlyStrip", {
 			return fallbackSvg;
 		}
 		if (this.iconStyle() === "fill") {
-			return svg.replace("<svg ", '<svg class="apple-icon-svg" ');
+			return svg.replace("<svg ", '<svg class="glyph-icon-svg" ');
 		}
 		const color = iconFile === ICON_FILES.sun ? "#FFD60A" : "#FFFFFF";
-		return svg.replace("<svg ", `<svg class="apple-icon-svg" color="${color}" `);
+		return svg.replace("<svg ", `<svg class="glyph-icon-svg" color="${color}" `);
 	},
 
 	getData: function () {
