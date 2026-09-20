@@ -144,7 +144,11 @@ describe("scrubTo", () => {
 	});
 
 	it("keeps play state per view", () => {
-		const c = ctx({ view: "precip", playing: { precip: false, wind: true } });
+		const c = ctx({
+			view: "precip",
+			playing: { precip: false, wind: true },
+			pausedElapsed: { precip: null, wind: null }
+		});
 		assert.equal(def.isPlaying.call(c), false);
 		c.view = "wind";
 		assert.equal(def.isPlaying.call(c), true);
@@ -155,9 +159,11 @@ describe("scrubTo", () => {
 		assert.deepEqual(c.playing, { precip: true, wind: false });
 		// togglePlay restarts animation: release the frame timer so
 		// the runner exits (production clears it on pause/restart).
+		// Resume schedules a setTimeout first, so clear both kinds.
 		// The glide loop needs no release — requestAnimationFrame
 		// is undefined here, so it never starts.
 		clearInterval(c.frameTimer);
+		clearTimeout(c.frameTimer);
 	});
 });
 
@@ -523,6 +529,8 @@ describe("wind scrub and badge", () => {
 			def.showWindFrame.call(
 				{
 					...c,
+					isPlaying: def.isPlaying,
+					clearPausedElapsedForView: def.clearPausedElapsedForView,
 					windWindow: def.windWindow,
 					currentWindSlot: def.currentWindSlot,
 					currentConditions: def.currentConditions,
@@ -1069,6 +1077,74 @@ describe("wind slots", () => {
 		});
 		def.paintProgress.call(c);
 		assert.equal(c.timelineProgress.style.width, "50%");
+	});
+});
+
+describe("pause/resume continuity", () => {
+	it("resumes mid-step without retreating to the tick", () => {
+		const realNow = Date.now;
+		const realTimeout = global.setTimeout;
+		const realInterval = global.setInterval;
+		let now = 100000;
+		const scheduled = [];
+		Date.now = () => now;
+		global.setTimeout = (fn, ms) => {
+			scheduled.push(["timeout", ms]);
+			return 999;
+		};
+		global.setInterval = (fn, ms) => {
+			scheduled.push(["interval", ms]);
+			return 1000;
+		};
+		try {
+			const c = ctx({
+				view: "precip",
+				frames: framesFixture(5),
+				frameIndex: 2,
+				stepStart: now - 400,
+				pausedElapsed: { precip: null, wind: null },
+				playing: { precip: true, wind: true },
+				timelineProgress: { style: {} }
+			});
+			c.updatePlayButton = () => {};
+			c.startProgressTicker = () => {};
+			c.stopProgressTicker = () => {};
+			c.addRadarLayer = () => {};
+			c.addMarkers = () => {};
+			const before = def.glideProgress.call(c, c.frameIndex, 5, now - c.stepStart, 800);
+			def.togglePlay.call(c);
+			assert.equal(c.playing.precip, false);
+			assert.equal(c.pausedElapsed.precip, 400);
+			now += 5000;
+			def.togglePlay.call(c);
+			assert.equal(c.playing.precip, true);
+			assert.equal(c.pausedElapsed.precip, null);
+			assert.equal(now - c.stepStart, 400);
+			const after = def.glideProgress.call(c, c.frameIndex, 5, now - c.stepStart, 800);
+			assert.equal(after, before);
+			assert.deepEqual(scheduled[0], ["timeout", 400]);
+		} finally {
+			Date.now = realNow;
+			global.setTimeout = realTimeout;
+			global.setInterval = realInterval;
+		}
+	});
+
+	it("keeps pause offsets per view", () => {
+		const c = ctx({
+			view: "wind",
+			pausedElapsed: { precip: null, wind: null },
+			playing: { precip: true, wind: true },
+			stepStart: Date.now() - 100,
+			config: { animationSpeedMs: 800 }
+		});
+		c.updatePlayButton = () => {};
+		c.clearFrameTimer = () => {};
+		c.stopProgressTicker = () => {};
+		c.paintProgress = () => {};
+		def.togglePlay.call(c);
+		assert.equal(c.pausedElapsed.wind > 0, true);
+		assert.equal(c.pausedElapsed.precip, null);
 	});
 });
 

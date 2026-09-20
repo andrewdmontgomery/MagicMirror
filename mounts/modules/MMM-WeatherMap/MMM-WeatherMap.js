@@ -94,6 +94,9 @@ Module.register("MMM-WeatherMap", {
 		this.frames = null;
 		this.frameIndex = 0;
 		this.stepStart = null;
+		// Pause offset per view (mirrors `playing`): pausing rain
+		// must not shift the wind resume point, and vice versa.
+		this.pausedElapsed = { precip: null, wind: null };
 		this.progressRaf = null;
 		// Play state persists separately per map type: pausing rain
 		// never stills the wind view, and vice versa.
@@ -1063,14 +1066,35 @@ Module.register("MMM-WeatherMap", {
 		this.progressRaf = null;
 	},
 
-	restartAnimation: function () {
+	clearFrameTimer: function () {
 		if (this.frameTimer) {
 			clearInterval(this.frameTimer);
+			clearTimeout(this.frameTimer);
 			this.frameTimer = null;
 		}
+	},
+
+	/* Resume-aware timer: the first advance fires after the
+	 * remainder of the paused step, then a steady interval.
+	 * resumeElapsed of 0 is a fresh full step. */
+	scheduleFrameTimer: function (advanceFn, resumeElapsed) {
+		const stepMs = this.config.animationSpeedMs;
+		const clamped = Math.min(Math.max(resumeElapsed || 0, 0), stepMs);
+		if (clamped <= 0) {
+			this.frameTimer = setInterval(advanceFn, stepMs);
+			return;
+		}
+		this.frameTimer = setTimeout(() => {
+			advanceFn();
+			this.frameTimer = setInterval(advanceFn, stepMs);
+		}, stepMs - clamped);
+	},
+
+	restartAnimation: function ({ resumeElapsed = 0 } = {}) {
+		this.clearFrameTimer();
 		this.stopProgressTicker();
 		if (this.isWindView()) {
-			this.restartWindAnimation();
+			this.restartWindAnimation({ resumeElapsed });
 			return;
 		}
 		if (!this.frames || this.frames.frames.length < 2) {
@@ -1084,8 +1108,14 @@ Module.register("MMM-WeatherMap", {
 		if (!this.isPlaying()) {
 			return;
 		}
+		if (resumeElapsed > 0) {
+			// Continue the glide mid-step instead of snapping back
+			// to the last tick.
+			this.stepStart = Date.now() - resumeElapsed;
+			this.paintProgress();
+		}
 		this.startProgressTicker();
-		this.frameTimer = setInterval(() => {
+		this.scheduleFrameTimer(() => {
 			// Re-attempt layer creation every tick: layer setup gates
 			// on style readiness, and addRadarLayer is idempotent via
 			// its getSource guard.
@@ -1096,7 +1126,7 @@ Module.register("MMM-WeatherMap", {
 				this.advancePosition();
 			}
 			this.showFrame(this.frameIndex, { prev });
-		}, this.config.animationSpeedMs);
+		}, resumeElapsed);
 	},
 
 	/* Drop all radar layers/sources (fresh frame set on refresh). */
@@ -1119,7 +1149,7 @@ Module.register("MMM-WeatherMap", {
 	/* Wind tick: advance the hourly slot; the timeline and particle
 	 * drift read the current slot (the badge always reads current
 	 * conditions). */
-	restartWindAnimation: function () {
+	restartWindAnimation: function ({ resumeElapsed = 0 } = {}) {
 		const slots = this.windSlots();
 		if (slots.length < 2) {
 			return;
@@ -1129,14 +1159,20 @@ Module.register("MMM-WeatherMap", {
 		if (!this.isPlaying()) {
 			return;
 		}
+		if (resumeElapsed > 0) {
+			// Continue the glide mid-step instead of snapping back
+			// to the last tick.
+			this.stepStart = Date.now() - resumeElapsed;
+			this.paintProgress();
+		}
 		this.startProgressTicker();
-		this.frameTimer = setInterval(() => {
+		this.scheduleFrameTimer(() => {
 			this.windIndex = (this.windIndex + 1) % slots.length;
 			if (this.windIndex === 0) {
 				this.advancePosition();
 			}
 			this.showWindFrame(this.windIndex);
-		}, this.config.animationSpeedMs);
+		}, resumeElapsed);
 	},
 
 	/* Full radar loop done — advance map position if its loop quota is
@@ -1157,10 +1193,33 @@ Module.register("MMM-WeatherMap", {
 		}
 	},
 
+	/* Pause offset for the active view (tolerates the legacy
+	 * scalar shape from before per-view offsets). */
+	pausedElapsedForView: function () {
+		const elapsed = this.pausedElapsed;
+		if (elapsed && typeof elapsed === "object") {
+			return elapsed[this.view] || 0;
+		}
+		return elapsed || 0;
+	},
+
+	clearPausedElapsedForView: function () {
+		if (this.pausedElapsed && typeof this.pausedElapsed === "object") {
+			this.pausedElapsed[this.view] = null;
+		} else {
+			this.pausedElapsed = null;
+		}
+	},
+
 	/* Display one wind slot: badge plus timeline label + progress. */
 	showWindFrame: function (index) {
 		this.windIndex = index;
 		this.stepStart = Date.now();
+		if (!this.isPlaying()) {
+			// Scrubbed or refreshed while paused: the old pause
+			// offset belongs to a previous step, start fresh.
+			this.clearPausedElapsedForView();
+		}
 		this.updateWindBadge();
 		this.updateTimeline();
 	},
@@ -1173,6 +1232,9 @@ Module.register("MMM-WeatherMap", {
 		}
 		this.frameIndex = index;
 		this.stepStart = Date.now();
+		if (!this.isPlaying()) {
+			this.clearPausedElapsedForView();
+		}
 		if (paint && this.map && this.map.getSource(`rainviewer-${index}`)) {
 			if (prev !== undefined && this.map.getSource(`rainviewer-${prev}`)) {
 				this.map.setPaintProperty(`rainviewer-${prev}`, "raster-opacity", 0);
@@ -1201,13 +1263,28 @@ Module.register("MMM-WeatherMap", {
 		this.playing[this.view] = !this.isPlaying();
 		this.updatePlayButton();
 		if (this.isPlaying()) {
-			this.restartAnimation();
+			const resumeElapsed = Math.min(
+				Math.max(this.pausedElapsedForView(), 0),
+				this.config.animationSpeedMs
+			);
+			this.clearPausedElapsedForView();
+			this.restartAnimation({ resumeElapsed });
 		} else {
-			if (this.frameTimer) {
-				clearInterval(this.frameTimer);
-				this.frameTimer = null;
+			// Freeze the glide mid-step so resume continues from
+			// here instead of retreating to the last tick.
+			const stepMs = this.config.animationSpeedMs;
+			const elapsed = Math.min(
+				Math.max(Date.now() - (this.stepStart || Date.now()), 0),
+				stepMs
+			);
+			if (this.pausedElapsed && typeof this.pausedElapsed === "object") {
+				this.pausedElapsed[this.view] = elapsed;
+			} else {
+				this.pausedElapsed = elapsed;
 			}
+			this.clearFrameTimer();
 			this.stopProgressTicker();
+			this.paintProgress();
 		}
 	},
 
