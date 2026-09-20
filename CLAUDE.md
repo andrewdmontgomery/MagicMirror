@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this repo is
 
-A Docker-based configuration setup for [MagicMirror²](https://docs.magicmirror.builders/) (a Raspberry Pi smart-mirror platform). There is no local Node install and no build step — the actual MagicMirror runtime lives inside the `karsten13/magicmirror` Docker image. This repo only contains what's mounted into that container: `docker-compose.yml`, the mirror's config, and one custom third-party module.
+A Docker-based configuration setup for [MagicMirror²](https://docs.magicmirror.builders/) (a Raspberry Pi smart-mirror platform). There is no local Node install and no build step — the actual MagicMirror runtime lives inside the `karsten13/magicmirror` Docker image. This repo only contains what's mounted into that container: `docker-compose.yml`, the mirror's config, and four custom first-party modules (HourlyStrip, WindCompass, WeatherMap, WeatherWatcher).
 
 ## Commands
 
@@ -15,7 +15,24 @@ A Docker-based configuration setup for [MagicMirror²](https://docs.magicmirror.
 - Stop: `docker compose down`
 - View the mirror: `http://localhost:8080` (runs in server-only mode — no Electron/kiosk display needed on the host; any browser works)
 
-There is no build, lint, or test tooling in this repo.
+There is no build or lint tooling. Tests are unit-only via `node --test`: `npm test` runs the HourlyStrip + WeatherMap + WeatherWatcher suites (`*/tests/unit/*.test.js`, pure logic — no DOM, no map, no timers). Keep them green before every commit. WindCompass has no suite.
+
+## Skills
+
+Load these with the skill tool when the task matches — never hand-roll the workflow a skill already covers:
+
+- `modern-javascript-patterns` (`.agents/skills/`) — JS style for module front-ends and helpers. Use for any JS you write or review here.
+- `node-testing` (`.agents/skills/`) — how tests are written and run in this repo. Use when adding or changing tests.
+- `git-storytelling-commit-strategy` (user skills) — commit early and often, one logical change per commit. Use when planning commits.
+- `mm-verify` (`.claude/skills/`) — restart + log check after ANY edit under `mounts/`. Mandatory every time; MagicMirror does not hot-reload.
+- `mm-module-api` — `Module.register` / `node_helper` / notification reference. Use whenever extending, debugging, or reasoning about any module's behavior.
+- `mm-core-modules` — built-in module config reference (clock, weather, positions, module-entry fields). Use when touching built-ins in `config.js`.
+- `mm-config` — `custom.css`, secrets mechanism, CORS proxy. Use when styling, hiding keys, or hitting browser CORS errors.
+- `mm-ui-tuning` — visual iteration against the live container in the browser. Use when resizing, restyling, or re-aligning anything on the mirror.
+- `mm-dependency-check` — audit notification consumers before removing/disabling modules or changing broadcast shapes. Use before deleting config entries or renaming notifications.
+- `mm-vendor-assets` — vendoring icons, fonts, or JS libraries. Use when adding any third-party files (verify, version, license).
+- `new-mm-module` — scaffolding a new custom module. Use when creating one.
+- `hrrr-model-data`, `maplibre-particle-layer` — domain references for the WeatherMap wind pipeline (HRRR fetch/decode, particle rendering). Use when touching wind grids or particles.
 
 ## Architecture
 
