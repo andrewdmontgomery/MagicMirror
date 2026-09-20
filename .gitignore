@@ -1,6 +1,5 @@
 .DS_Store
 .claude/settings.local.json
-/symbols/
 .env
 mounts/config/config.js.bak
 mounts/config/basepath.js
