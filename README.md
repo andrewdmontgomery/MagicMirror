@@ -23,7 +23,7 @@ Useful commands:
 docker compose restart magicmirror      # required after ANY edit to mounts/config or mounts/modules
 docker compose logs --tail=50 magicmirror
 docker compose down
-npm test                                # unit tests for HourlyStrip + WeatherMap pure logic
+npm test                                # unit tests for HourlyStrip + WeatherMap + WeatherWatcher pure logic
 ```
 
 MagicMirror does not hot-reload config or module code — restart the container
@@ -40,8 +40,8 @@ All modules show the same hardcoded lat/lon (Inver Grove Heights, MN).
 | `weather` (`openmeteo`, `forecast`, 5-day) | `top_right` | 5-Day Forecast | Built-in, `appendLocationNameToHeader: false` |
 | `MMM-HourlyStrip` | `bottom_bar` | Hourly Forecast | Custom, 24h strip |
 | `MMM-WindCompass` | `bottom_right` | Wind | Custom |
-| `MMM-WeatherMap` | `bottom_left` | Weather Map | Custom, `hiddenOnStartup: true` |
-| `MMM-RainWatcher` | (no position) | — | Custom, show/hide controller, no UI |
+| `MMM-WeatherMap` | `bottom_left` | Weather Map | Custom, always visible; precip/wind views |
+| `MMM-WeatherWatcher` | (no position) | — | Custom, map view selector, no UI |
 
 ## Custom modules
 
@@ -54,8 +54,8 @@ container's bundled default modules stay untouched.
   daily sunrise/sunset). Sunrise/sunset columns are interleaved
   chronologically. Icons are vendored Meteocons glyphs with hand-built SVG
   fallbacks, so it works offline. Re-broadcasts the forecast as a stock-shaped
-  `WEATHER_UPDATED` notification (`source: "MMM-HourlyStrip"`) so
-  RainWatcher can consume it.
+   `WEATHER_UPDATED` notification (`source: "MMM-HourlyStrip"`) so
+   WeatherWatcher can consume it.
 - **MMM-WindCompass** — current wind speed/gusts/direction from Open-Meteo,
   plus a hand-built parametric SVG compass dial (`buildCompassSvg` — resize
   via the `ringRadius`/`discRadius`/`tickLength` constants, not by
@@ -63,13 +63,27 @@ container's bundled default modules stay untouched.
   header text, optional `locationName`), always falling back to "Wind".
 - **MMM-WeatherMap** — animated rain-radar map on a CARTO dark basemap using
   vendored MapLibre GL (ESM, `vendor/`), with RainViewer radar frames as an
-  animated raster overlay plus wind particles, timeline, and legend. The
-  node helper fetches the CARTO style JSON (needs the API key) and the
-  RainViewer frame list server-side.
-- **MMM-RainWatcher** — headless controller (no UI, no position). Listens for
-  `WEATHER_UPDATED` from HourlyStrip and shows/hides `MMM-WeatherMap`
-  (which starts hidden) when forecast precipitation within `forecastHours`
-  crosses `rainProbabilityThreshold` / `rainAmountThreshold`.
+  animated raster overlay plus wind particles, timelines, legend, and a
+  wind callout/badge anchored to the home marker. The wind view advects
+  particles through HRRR 10m U/V grids: the node helper fetches subsets
+  from AWS open data (keyless, 6-hour cadence), decodes GRIB2 with pure-JS
+  `grib2.js` (Lambert conformal projection, no native deps), and serves a
+  full-res regional window plus a coarse CONUS grid that particles
+  bilinear-sample (regional first, continental fallback, recentered on pan).
+  The wind timeline spans past analyses plus forecast hours (`windHoursPast:
+  4`, `windHoursFuture: 12`); the precip timeline is RainViewer past-only.
+  Each view keeps its own play state with gliding progress, scrubbing, and
+  pause/resume that continues mid-step. The node helper fetches the CARTO
+  style JSON (needs the API key) and the RainViewer frame list server-side.
+- **MMM-WeatherWatcher** — headless controller (no UI, no position).
+  Listens for `WEATHER_UPDATED` from HourlyStrip and selects
+  `MMM-WeatherMap`'s default view (`precip` when forecast precipitation
+  within `forecastHours` (default 12) crosses `precipProbabilityThreshold`
+  (default 30) / `precipAmountThreshold` (default 0.3), else `wind`) via
+  `WEATHERMAP_SET_VIEW`. Ignores non-hourly instances (empty `hourlyArray`)
+  and re-asserts the latest decision on `DOM_OBJECTS_CREATED` so an early
+  broadcast isn't lost. Built to grow: AQI, temperature, and other signals
+  will join the same decision.
 
 ## Secrets
 
@@ -105,8 +119,8 @@ mounts/config/config.js     # the mirror config (restart container after edits)
 mounts/modules/             # custom modules (restart container after edits)
   MMM-HourlyStrip/          # 24h strip (node_helper, tests, icons, tools/build-icons.py)
   MMM-WindCompass/          # wind dial (node_helper)
-  MMM-WeatherMap/           # radar map (node_helper, tests, vendor/maplibre)
-  MMM-RainWatcher/          # map show/hide controller (front-end only)
+  MMM-WeatherMap/           # radar/wind map (node_helper, grib2.js, tests + fixtures, vendor/maplibre)
+  MMM-WeatherWatcher/         # map view selector (front-end only, tests)
 docs/plans/                 # design plans for past builds
 symbols/                    # gitignored local scratch
 ```
@@ -118,11 +132,12 @@ them.
 ## Tests
 
 ```bash
-npm test                    # HourlyStrip + WeatherMap unit suites
+npm test                    # HourlyStrip + WeatherMap + WeatherWatcher unit suites
 npm run test:hourly-strip
 npm run test:weather-map
+npm run test:weather-watcher
 ```
 
 Tests run with `node --test` against `*/tests/unit/*.test.js` and cover the
 pure front-end/helper logic (e.g. HourlyStrip column building, WeatherMap
-frame handling). WindCompass and RainWatcher have no suites.
+frame handling, WeatherWatcher view selection). WindCompass has no suite.
