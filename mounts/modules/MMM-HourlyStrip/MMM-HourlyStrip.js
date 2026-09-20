@@ -217,7 +217,7 @@ Module.register("MMM-HourlyStrip", {
 	},
 
 	/* Re-broadcast the hourly forecast in the stock weather module's
-	 * WEATHER_UPDATED shape so MMM-RainWatcher can drive the rain map
+	 * WEATHER_UPDATED shape so MMM-WeatherWatcher can drive the map view
 	 * from this single Open-Meteo fetch (no separate hourly instance). */
 	broadcastHourly: function () {
 		const hourly = this.hourlyData && this.hourlyData.hourly;

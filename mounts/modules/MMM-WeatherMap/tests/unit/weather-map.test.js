@@ -1466,6 +1466,25 @@ describe("start", () => {
 			assert.ok(sent.includes(name), `missing ${name}`);
 		}
 	});
+
+	it("opens on the configured default view, falling back to wind", () => {
+		const realSetInterval = global.setInterval;
+		global.setInterval = () => 0;
+		const views = [];
+		try {
+			for (const defaultView of ["wind", "precip", "bogus"]) {
+				const c = ctx({
+					config: { defaultView, lat: 1, lon: 2, units: "imperial" },
+					sendSocketNotification: () => {}
+				});
+				def.start.call(c);
+				views.push(c.view);
+			}
+		} finally {
+			global.setInterval = realSetInterval;
+		}
+		assert.deepEqual(views, ["wind", "precip", "wind"]);
+	});
 });
 
 describe("updateTimeline", () => {

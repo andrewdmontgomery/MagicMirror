@@ -8,6 +8,11 @@
  * View selection is manual for now (viewControl + WEATHERMAP_SET_VIEW);
  * a future auto-selector can drive the same setView() — e.g. default to
  * whichever of rain/AQI/wind is most relevant.
+ *
+ * Default view: MMM-WeatherWatcher is that auto-selector for the two
+ * current views — it sends WEATHERMAP_SET_VIEW with "precip" when rain
+ * is in the hourly forecast, "wind" otherwise. defaultView below only
+ * covers the window before the first forecast arrives.
  */
 
 /* Frame-layer ceiling: RainViewer serves ~13 past frames; anything beyond
@@ -64,9 +69,9 @@ Module.register("MMM-WeatherMap", {
 		showTimeline: true,
 		updateInterval: 10 * 60 * 1000,
 		animationSpeed: 1000,
-		/* Active view on startup; toggled manually via viewControl or the
-		 * WEATHERMAP_SET_VIEW notification (payload: { view }). */
-		defaultView: "precip",
+		/* Active view on startup, before MMM-WeatherWatcher asserts the
+		 * forecast-driven default (wind — no-rain is the common case). */
+		defaultView: "wind",
 		/* Should mirror the global units — "imperial" (mph) or "metric" (km/h). */
 		units: "imperial",
 		/* Open-Meteo wind refresh (uniform field until the HRRR gridded
@@ -97,7 +102,7 @@ Module.register("MMM-WeatherMap", {
 		this.loopCount = 0;
 		this.frameTimer = null;
 		this.framesKey = null;
-		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "precip";
+		this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : "wind";
 		this.wind = null;
 		this.windIndex = 0;
 		this.windFields = [];
@@ -197,7 +202,8 @@ Module.register("MMM-WeatherMap", {
 		}, 1500);
 	},
 
-	/* External view control (manual toggle today, auto-selector later):
+	/* External view control (MMM-WeatherWatcher's forecast-driven default
+	 * plus the manual toggle — both send WEATHERMAP_SET_VIEW):
 	 * `sendNotification("WEATHERMAP_SET_VIEW", { view: "wind" })`.
 	 * Manual toggles broadcast WEATHERMAP_VIEW_CHANGED for observers. */
 	notificationReceived: function (notification, payload) {

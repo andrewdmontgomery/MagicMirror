@@ -86,7 +86,6 @@ let config = {
 			module: "MMM-WeatherMap",
 			position: "bottom_left",
 			header: "Weather Map",
-			hiddenOnStartup: true,
 			config: {
 				lat: 44.8480,
 				lon: -93.0430,
@@ -100,12 +99,11 @@ let config = {
 			}
 		},
 		{
-			module: "MMM-RainWatcher",
+			module: "MMM-WeatherWatcher",
 			config: {
-				targetModule: "MMM-WeatherMap",
 				forecastHours: 12,
-				rainProbabilityThreshold: 30,
-				rainAmountThreshold: 0.3
+				precipProbabilityThreshold: 30,
+				precipAmountThreshold: 0.3
 			}
 		}
 	]
