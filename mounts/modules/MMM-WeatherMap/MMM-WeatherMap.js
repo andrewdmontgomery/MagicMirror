@@ -658,6 +658,12 @@ Module.register("MMM-WeatherMap", {
 		if (this.config.showTimeline) {
 			this.mapDiv.appendChild(this.timelineDiv());
 		}
+		// Fresh callout nodes default to left:0/top:0 (under the legend)
+		// until projected: position here so every rebuild — notably the
+		// precip→wind switch in setView, which syncs BEFORE rebuilding —
+		// lands on the marker immediately instead of waiting for the next
+		// map move. No-op without a map or outside the wind view.
+		this.positionWindCallout();
 	},
 
 	/* Location callout: a plain overlay sibling above the map canvas.
