@@ -15,7 +15,7 @@ A Docker-based configuration setup for [MagicMirror²](https://docs.magicmirror.
 - Stop: `docker compose down`
 - View the mirror: `http://localhost:8080` (runs in server-only mode — no Electron/kiosk display needed on the host; any browser works)
 
-There is no build or lint tooling. Tests are unit-only via `node --test`: `npm test` runs the HourlyStrip + WeatherMap + WeatherWatcher suites (`*/tests/unit/*.test.js`, pure logic — no DOM, no map, no timers). Keep them green before every commit. WindCompass has no suite.
+There is no build step. Lint with `npm run lint` (after `npm ci`; ESLint 9 + neostandard over first-party code only — `vendor/`, test fixtures, and generated `basepath.js` are exempt; config in `eslint.config.mjs`). Tests are unit-only via `node --test`: `npm test` runs the HourlyStrip + WeatherMap + WeatherWatcher suites (`*/tests/unit/*.test.js`, pure logic — no DOM, no map, no timers). Keep lint and tests green before every commit; `test` / `lint` / `actionlint` workflows also gate every PR (`.github/workflows/`, `pull_request` triggers only). Local Node and CI both use Node 22. WindCompass has no suite.
 
 ## Skills
 
