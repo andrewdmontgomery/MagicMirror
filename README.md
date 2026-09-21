@@ -24,6 +24,7 @@ docker compose restart magicmirror      # required after ANY edit to mounts/conf
 docker compose logs --tail=50 magicmirror
 docker compose down
 npm test                                # unit tests for HourlyStrip + WeatherMap + WeatherWatcher pure logic
+npm run lint                          # ESLint (neostandard) over first-party code; vendor/ + fixtures exempt
 ```
 
 MagicMirror does not hot-reload config or module code — restart the container

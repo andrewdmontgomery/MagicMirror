@@ -15,107 +15,107 @@
  * not two's-complement -32764, which would collapse the field to a
  * constant).
  */
-const { describe, it } = require("node:test");
-const assert = require("node:assert/strict");
-const path = require("node:path");
-const fs = require("node:fs");
+const { describe, it } = require('node:test')
+const assert = require('node:assert/strict')
+const path = require('node:path')
+const fs = require('node:fs')
 
-const { readMessage, gridDimensions, productInfo, simplePacking, unpackSimple, bilinearSample } = require("../../grib2.js");
+const { readMessage, gridDimensions, productInfo, simplePacking, unpackSimple, bilinearSample } = require('../../grib2.js')
 
-const FIXTURE = path.resolve(__dirname, "..", "fixtures", "ugrd-sample.grb");
+const FIXTURE = path.resolve(__dirname, '..', 'fixtures', 'ugrd-sample.grb')
 
-function message() {
-	return readMessage(fs.readFileSync(FIXTURE));
+function message () {
+  return readMessage(fs.readFileSync(FIXTURE))
 }
 
-describe("readMessage", () => {
-	it("walks length-prefixed sections of a GRIB2 message", () => {
-		const msg = message();
-		assert.deepEqual([...msg.sections.keys()].sort((a, b) => a - b), [1, 3, 4, 5, 6, 7]);
-		assert.equal(msg.totalLength, fs.statSync(FIXTURE).size);
-	});
-});
+describe('readMessage', () => {
+  it('walks length-prefixed sections of a GRIB2 message', () => {
+    const msg = message()
+    assert.deepEqual([...msg.sections.keys()].sort((a, b) => a - b), [1, 3, 4, 5, 6, 7])
+    assert.equal(msg.totalLength, fs.statSync(FIXTURE).size)
+  })
+})
 
-describe("gridDimensions", () => {
-	it("reads the HRRR conus grid", () => {
-		assert.deepEqual(gridDimensions(message()), { nx: 1799, ny: 1059 });
-	});
-});
+describe('gridDimensions', () => {
+  it('reads the HRRR conus grid', () => {
+    assert.deepEqual(gridDimensions(message()), { nx: 1799, ny: 1059 })
+  })
+})
 
-describe("productInfo", () => {
-	it("identifies the U-component of wind", () => {
-		// Discipline 0 (meteorological), category 2 (momentum), number 2 (u-wind).
-		assert.deepEqual(productInfo(message()), { discipline: 0, category: 2, parameter: 2 });
-	});
-});
+describe('productInfo', () => {
+  it('identifies the U-component of wind', () => {
+    // Discipline 0 (meteorological), category 2 (momentum), number 2 (u-wind).
+    assert.deepEqual(productInfo(message()), { discipline: 0, category: 2, parameter: 2 })
+  })
+})
 
-describe("simplePacking", () => {
-	it("reads reference, scales, and bit depth", () => {
-		const packing = simplePacking(message());
-		assert.ok(Math.abs(packing.reference + 15.068912506103516) < 1e-9);
-		assert.equal(packing.binaryScale, -4);
-		assert.equal(packing.decimalScale, 0);
-		assert.equal(packing.bitsPerValue, 10);
-	});
+describe('simplePacking', () => {
+  it('reads reference, scales, and bit depth', () => {
+    const packing = simplePacking(message())
+    assert.ok(Math.abs(packing.reference + 15.068912506103516) < 1e-9)
+    assert.equal(packing.binaryScale, -4)
+    assert.equal(packing.decimalScale, 0)
+    assert.equal(packing.bitsPerValue, 10)
+  })
 
-	it("fails loudly on non-simple packing", () => {
-		const msg = message();
-		const tampered = Buffer.from(msg.sections.get(5));
-		tampered.writeUInt16BE(40, 9);
-		msg.sections.set(5, tampered);
-		assert.throws(() => simplePacking(msg), /packing template 40/);
-	});
-});
+  it('fails loudly on non-simple packing', () => {
+    const msg = message()
+    const tampered = Buffer.from(msg.sections.get(5))
+    tampered.writeUInt16BE(40, 9)
+    msg.sections.set(5, tampered)
+    assert.throws(() => simplePacking(msg), /packing template 40/)
+  })
+})
 
-describe("unpackSimple", () => {
-	it("decodes the first values to sane winds", () => {
-		const values = unpackSimple(message(), 10);
-		const expected = [
-			-7.506412506103516, -7.443912506103516, -7.443912506103516,
-			-7.381412506103516, -7.381412506103516, -7.381412506103516,
-			-7.381412506103516, -7.381412506103516, -7.318912506103516,
-			-7.318912506103516
-		];
-		assert.equal(values.length, 10);
-		expected.forEach((want, i) => {
-			assert.ok(Math.abs(values[i] - want) < 1e-9, `value ${i}: got ${values[i]}, want ${want}`);
-		});
-	});
+describe('unpackSimple', () => {
+  it('decodes the first values to sane winds', () => {
+    const values = unpackSimple(message(), 10)
+    const expected = [
+      -7.506412506103516, -7.443912506103516, -7.443912506103516,
+      -7.381412506103516, -7.381412506103516, -7.381412506103516,
+      -7.381412506103516, -7.381412506103516, -7.318912506103516,
+      -7.318912506103516
+    ]
+    assert.equal(values.length, 10)
+    expected.forEach((want, i) => {
+      assert.ok(Math.abs(values[i] - want) < 1e-9, `value ${i}: got ${values[i]}, want ${want}`)
+    })
+  })
 
-	it("decodes the whole grid to a plausible wind field", () => {
-		const values = unpackSimple(message());
-		assert.equal(values.length, 1799 * 1059);
-		let min = Infinity;
-		let max = -Infinity;
-		let total = 0;
-		for (const v of values) {
-			if (v < min) {
-				min = v;
-			}
-			if (v > max) {
-				max = v;
-			}
-			total += v;
-		}
-		assert.ok(Math.abs(min + 15.068912506103516) < 1e-6, `min ${min}`);
-		assert.ok(Math.abs(max - 17.556087493896484) < 1e-6, `max ${max}`);
-		assert.ok(Math.abs(total / values.length + 0.6267577981317697) < 1e-6, `mean ${total / values.length}`);
-	});
-});
+  it('decodes the whole grid to a plausible wind field', () => {
+    const values = unpackSimple(message())
+    assert.equal(values.length, 1799 * 1059)
+    let min = Infinity
+    let max = -Infinity
+    let total = 0
+    for (const v of values) {
+      if (v < min) {
+        min = v
+      }
+      if (v > max) {
+        max = v
+      }
+      total += v
+    }
+    assert.ok(Math.abs(min + 15.068912506103516) < 1e-6, `min ${min}`)
+    assert.ok(Math.abs(max - 17.556087493896484) < 1e-6, `max ${max}`)
+    assert.ok(Math.abs(total / values.length + 0.6267577981317697) < 1e-6, `mean ${total / values.length}`)
+  })
+})
 
-describe("bilinearSample", () => {
-	// 3x3 grid: value = row * 10 + col.
-	const grid = [0, 1, 2, 10, 11, 12, 20, 21, 22];
+describe('bilinearSample', () => {
+  // 3x3 grid: value = row * 10 + col.
+  const grid = [0, 1, 2, 10, 11, 12, 20, 21, 22]
 
-	it("returns nodes exactly and blends interiors", () => {
-		assert.equal(bilinearSample(grid, 3, 3, 0, 0), 0);
-		assert.equal(bilinearSample(grid, 3, 3, 2, 2), 22);
-		assert.equal(bilinearSample(grid, 3, 3, 0.5, 0.5), 5.5);
-		assert.equal(bilinearSample(grid, 3, 3, 1, 1.5), 11.5);
-	});
+  it('returns nodes exactly and blends interiors', () => {
+    assert.equal(bilinearSample(grid, 3, 3, 0, 0), 0)
+    assert.equal(bilinearSample(grid, 3, 3, 2, 2), 22)
+    assert.equal(bilinearSample(grid, 3, 3, 0.5, 0.5), 5.5)
+    assert.equal(bilinearSample(grid, 3, 3, 1, 1.5), 11.5)
+  })
 
-	it("clamps outside positions to the edge", () => {
-		assert.equal(bilinearSample(grid, 3, 3, -5, 1), 1);
-		assert.equal(bilinearSample(grid, 3, 3, 1, 99), 12);
-	});
-});
+  it('clamps outside positions to the edge', () => {
+    assert.equal(bilinearSample(grid, 3, 3, -5, 1), 1)
+    assert.equal(bilinearSample(grid, 3, 3, 1, 99), 12)
+  })
+})

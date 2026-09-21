@@ -5,3 +5,4 @@ mounts/config/config.js.bak
 mounts/config/basepath.js
 mounts/config/custom.css
 __pycache__/
+node_modules/

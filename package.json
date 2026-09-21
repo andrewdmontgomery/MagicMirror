@@ -6,6 +6,13 @@
 		"test": "npm run test:hourly-strip && npm run test:weather-map && npm run test:weather-watcher",
 		"test:hourly-strip": "node --test mounts/modules/MMM-HourlyStrip/tests/unit/*.test.js",
 		"test:weather-watcher": "node --test mounts/modules/MMM-WeatherWatcher/tests/unit/*.test.js",
-		"test:weather-map": "node --test mounts/modules/MMM-WeatherMap/tests/unit/*.test.js"
+		"test:weather-map": "node --test mounts/modules/MMM-WeatherMap/tests/unit/*.test.js",
+		"lint": "eslint .",
+		"lint:fix": "eslint . --fix"
+	},
+	"devDependencies": {
+		"eslint": "^9.39.5",
+		"globals": "^17.12.0",
+		"neostandard": "^0.13.0"
 	}
 }
