@@ -67,6 +67,10 @@ let config = {
 				units: "imperial",
 				hoursToShow: 24,
 				showPrecipThreshold: 20,
+				/* Must match MMM-WeatherWatcher's precipAmountThreshold (both
+				 * in mm) so any hour that votes the map to rain always shows
+				 * its % on the strip. */
+				showPrecipAmountThreshold: 0.3,
 				showSunrise: true,
 				showSunset: true,
 				iconStyle: "fill"

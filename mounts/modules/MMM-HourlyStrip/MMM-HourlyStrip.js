@@ -130,6 +130,13 @@ Module.register("MMM-HourlyStrip", {
 		units: "imperial",
 		hoursToShow: 24,
 		showPrecipThreshold: 20,
+		/* Show the precip % on an hour when either the probability OR the
+		 * amount would trip MMM-WeatherWatcher (same units: Open-Meteo
+		 * returns precipitation in mm, and the Watcher's
+		 * precipAmountThreshold is compared in mm). This keeps the strip
+		 * and the map's rain/wind default in agreement: any hour that
+		 * votes "precip" always displays its percentage. */
+		showPrecipAmountThreshold: 0.3,
 		showSunrise: true,
 		showSunset: true,
 		showSummary: false,
@@ -151,6 +158,23 @@ Module.register("MMM-HourlyStrip", {
 
 	iconStyle: function () {
 		return ICON_STYLES.includes(this.config.iconStyle) ? this.config.iconStyle : "monochrome";
+	},
+
+	/* Display rule for the precip percentage: show when either the
+	 * probability or the amount threshold is met, mirroring
+	 * MMM-WeatherWatcher's OR rule so a map-rain trigger is never
+	 * invisible on the strip. Pure — unit-tested. */
+	shouldShowPrecip: function (prob, amountMm) {
+		const probThreshold = typeof this.config.showPrecipThreshold === "number"
+			? this.config.showPrecipThreshold
+			: 20;
+		const amountThreshold = typeof this.config.showPrecipAmountThreshold === "number"
+			? this.config.showPrecipAmountThreshold
+			: 0.3;
+		return (
+			(typeof prob === "number" && prob >= probThreshold) ||
+			(typeof amountMm === "number" && amountMm >= amountThreshold)
+		);
 	},
 
 	loadGlyphIcons: function () {
@@ -365,7 +389,7 @@ Module.register("MMM-HourlyStrip", {
 		mid.className = "hourly-mid";
 		mid.appendChild(iconWrap);
 
-		if (entry.precip >= this.config.showPrecipThreshold) {
+		if (this.shouldShowPrecip(entry.precip, entry.precipMm)) {
 			const precip = document.createElement("div");
 			precip.className = "hourly-precip";
 			precip.textContent = `${Math.round(entry.precip)}%`;
