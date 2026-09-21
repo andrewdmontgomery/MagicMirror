@@ -21,8 +21,8 @@ There is no build or lint tooling. Tests are unit-only via `node --test`: `npm t
 
 Load these with the skill tool when the task matches — never hand-roll the workflow a skill already covers:
 
-- `modern-javascript-patterns` (`.agents/skills/`) — JS style for module front-ends and helpers. Use for any JS you write or review here.
-- `node-testing` (`.agents/skills/`) — how tests are written and run in this repo. Use when adding or changing tests.
+- `modern-javascript-patterns` (`.claude/skills/`) — JS style for module front-ends and helpers. Use for any JS you write or review here.
+- `node-testing` (`.claude/skills/`) — how tests are written and run in this repo. Use when adding or changing tests.
 - `git-storytelling-commit-strategy` (user skills) — commit early and often, one logical change per commit. Use when planning commits.
 - `mm-verify` (`.claude/skills/`) — restart + log check after ANY edit under `mounts/`. Mandatory every time; MagicMirror does not hot-reload.
 - `mm-module-api` — `Module.register` / `node_helper` / notification reference. Use whenever extending, debugging, or reasoning about any module's behavior.

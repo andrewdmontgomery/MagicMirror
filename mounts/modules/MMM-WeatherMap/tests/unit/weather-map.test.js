@@ -401,6 +401,48 @@ describe("wind callout positioning", () => {
 		def.positionWindCallout.call(ctx({ map: null, windCallout: null }));
 	});
 
+	it("positions the fresh callout on rebuild (precip→wind switch)", () => {
+		// Regression: setView syncs BEFORE rebuilding, so the sync-time
+		// position no-ops on the stale null callout — the rebuild itself
+		// must position the fresh node, else it sits at 0,0 under the
+		// legend until the next map move.
+		const realDocument = global.document;
+		global.document = {
+			createElement: () => ({
+				className: "",
+				style: {},
+				appendChild(child) { return child; },
+				addEventListener() {},
+				setAttribute: () => {}
+			})
+		};
+		try {
+			const c = ctx({
+				config: { lat: 10, lon: 20, showLegend: false, showTimeline: false },
+				view: "wind",
+				map: { project: () => ({ x: 210, y: 200 }) },
+				mapDiv: { querySelector: () => null, appendChild(child) { return child; } },
+				windCallout: null,
+				windBadge: null,
+				wind: null
+			});
+			for (const fn of ["buildCallout", "updateWindBadge", "positionWindCallout", "homeLngLat",
+				"windLegendScale", "currentConditions", "nowWindSlot", "windWindow",
+				"windCompass16", "windBadgeSvg"]) {
+				c[fn] = (...args) => def[fn].call(c, ...args);
+			}
+			def.rebuildOverlays.call(c);
+			assert.equal(c.windCallout.style.left, "210px");
+			assert.equal(c.windCallout.style.top, "186px");
+		} finally {
+			if (realDocument === undefined) {
+				delete global.document;
+			} else {
+				global.document = realDocument;
+			}
+		}
+	});
+
 	it("renderMapView keeps the getDom-built callout reference", () => {
 		// Regression: renderMapView runs AFTER getDom (setTimeout) and
 		// must not drop the callout the load handler has to position.
