@@ -93,6 +93,25 @@ describe("time formatting", () => {
 	});
 });
 
+describe("shouldShowPrecip", () => {
+	it("shows on the probability threshold alone", () => {
+		const c = ctx({ config: { showPrecipThreshold: 20, showPrecipAmountThreshold: 0.3 } });
+		assert.equal(def.shouldShowPrecip.call(c, 20, 0), true);
+		assert.equal(def.shouldShowPrecip.call(c, 45, 0), true);
+	});
+
+	it("shows on the amount threshold even when probability is low", () => {
+		const c = ctx({ config: { showPrecipThreshold: 20, showPrecipAmountThreshold: 0.3 } });
+		assert.equal(def.shouldShowPrecip.call(c, 12, 0.4), true);
+	});
+
+	it("hides when neither threshold is met", () => {
+		const c = ctx({ config: { showPrecipThreshold: 20, showPrecipAmountThreshold: 0.3 } });
+		assert.equal(def.shouldShowPrecip.call(c, 12, 0), false);
+		assert.equal(def.shouldShowPrecip.call(c, 0, 0.1), false);
+	});
+});
+
 describe("buildColumns", () => {
 	function hourlyData() {
 		const now = new Date();
