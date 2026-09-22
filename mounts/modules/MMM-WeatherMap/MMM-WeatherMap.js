@@ -283,25 +283,34 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Constraint decision for the shared map camera, pure given
-   * {view, zoom, center, bounds}: inside the AQI window → no-op;
-   * low zoom and/or escaped center → the minimal correction; any
-   * other view → clear. The MapLibre calls themselves
+   * {view, zoom, center, bounds, home}: inside the AQI window →
+   * no-op (low zoom alone keeps the current center); an escaped
+   * center → the selected location, never the nearest clamped edge
+   * (a clamp lands somewhere arbitrary — neither where the user was
+   * nor anywhere meaningful — and reads as a bug); any other view
+   * → clear. The MapLibre calls themselves
    * (setMinZoom/setMaxBounds/easeTo) stay untested glue, mirroring
    * the particle-GL pattern. Tested. */
-  aqiConstraintFor: function ({ view, zoom, center, bounds }) {
+  aqiConstraintFor: function ({ view, zoom, center, bounds, home }) {
     if (view !== 'aqi' || !bounds) {
       return view === 'aqi' ? { type: 'none' } : { type: 'clear' }
     }
     const [[west, south], [east, north]] = bounds
     const fixedZoom = Math.max(zoom, AQI_MIN_ZOOM)
-    const fixedCenter = [
+    const inside =
+      center[0] >= west && center[0] <= east &&
+      center[1] >= south && center[1] <= north
+    if (inside) {
+      if (fixedZoom === zoom) {
+        return { type: 'none' }
+      }
+      return { type: 'correct', zoom: fixedZoom, center: [center[0], center[1]] }
+    }
+    const clamped = [
       Math.min(Math.max(center[0], west), east),
       Math.min(Math.max(center[1], south), north)
     ]
-    if (fixedZoom === zoom && fixedCenter[0] === center[0] && fixedCenter[1] === center[1]) {
-      return { type: 'none' }
-    }
-    return { type: 'correct', zoom: fixedZoom, center: fixedCenter }
+    return { type: 'correct', zoom: fixedZoom, center: home ? [home[0], home[1]] : clamped }
   },
 
   /* Bounds for the AQI clamp: the fetched field geometry when it has
@@ -314,11 +323,12 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Clamp the shared map to the regional window. A camera already
-   * inside just gains the clamp; an escaped one glides home first
-   * (free — constraints land on moveend) so the correction reads as
-   * one motion under the view crossfade instead of a snap. Leaving
-   * AQI never comes here — clearViewConstraints releases both with
-   * no camera call, ever. Untested glue (no map under node --test). */
+   * inside just gains the clamp; an escaped one glides to the
+   * selected location first (free — constraints land on moveend) so
+   * entry reads as a reset instead of a nudge to an arbitrary edge.
+   * Leaving AQI never comes here — clearViewConstraints releases
+   * both with no camera call, ever. Untested glue (no map under
+   * node --test). */
   applyViewConstraints: function () {
     if (!this.map) {
       return
@@ -329,7 +339,8 @@ Module.register('MMM-WeatherMap', {
       view: 'aqi',
       zoom: this.map.getZoom(),
       center: [center.lng, center.lat],
-      bounds
+      bounds,
+      home: this.homeLngLat()
     })
     if (correction.type !== 'correct') {
       this.map.setMinZoom(AQI_MIN_ZOOM)

@@ -1745,6 +1745,44 @@ describe('aqiConstraintFor', () => {
     )
   })
 
+  it('sends an escaped camera to the selected location, not the nearest edge', () => {
+    // A clamp lands on an arbitrary edge — neither where the user was
+    // nor anywhere meaningful. Going home reads as a reset, not a bug.
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 6,
+        center: [-80, 60],
+        bounds: BOUNDS,
+        home: [-93, 41]
+      }),
+      { type: 'correct', zoom: 6, center: [-93, 41] }
+    )
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 4,
+        center: [-80, 60],
+        bounds: BOUNDS,
+        home: [-93, 41]
+      }),
+      { type: 'correct', zoom: 5, center: [-93, 41] }
+    )
+  })
+
+  it('keeps an inside center where it is even when home is given', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 4,
+        center: [-95, 40],
+        bounds: BOUNDS,
+        home: [-93, 41]
+      }),
+      { type: 'correct', zoom: 5, center: [-95, 40] }
+    )
+  })
+
   it('clears outside the aqi view regardless of camera', () => {
     assert.deepEqual(
       def.aqiConstraintFor.call(ctx(), { view: 'wind', zoom: 4, center: [0, 0], bounds: BOUNDS }),
