@@ -32,6 +32,10 @@ beforeEach(() => {
   helper.sendSocketNotification = (notification, payload) => {
     sent.push([notification, payload])
   }
+  // The helper object is a module singleton shared across tests —
+  // AQI fetch state must not leak between cases.
+  helper.aqiCache = null
+  helper.aqiFlight = null
   delete process.env.SECRET_CARTO_API_KEY
 })
 
@@ -530,6 +534,70 @@ describe('fetchAqi', () => {
     await helper.fetchAqi({ lat: 40, lon: -100 })
     assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_ERROR')
+  })
+
+  it('serves a fresh cache with zero network', async () => {
+    const field = { nx: 1, ny: 1, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [31] }
+    const home = { aqi: 31, time: '2026-09-21T20:00' }
+    helper.aqiCache = { lat: 40, lon: -100, fetchedAt: Date.now(), field, home }
+    global.fetch = async () => {
+      throw new Error('fetch must not run on a cache hit')
+    }
+    await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
+    assert.deepEqual(sent[0][1], { field, home })
+  })
+
+  it('refetches a stale cache and re-caches the payload', async () => {
+    const staleMs = 6 * 60 * 60 * 1000 + 1000
+    helper.aqiCache = {
+      lat: 40,
+      lon: -100,
+      fetchedAt: Date.now() - staleMs,
+      field: null,
+      home: null
+    }
+    global.fetch = gridFetch()
+    await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.equal(fetchedUrls.length, 1)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
+    assert.equal(sent[0][1].home.aqi, 31)
+    assert.equal(helper.aqiCache.field.values.length, 315)
+    assert.equal(helper.aqiCache.home.aqi, 31)
+  })
+
+  it('refetches when coordinates change', async () => {
+    const field = { nx: 1, ny: 1, lat0: 41, lon0: -100, dLat: 1, dLon: 1, values: [31] }
+    helper.aqiCache = {
+      lat: 41,
+      lon: -100,
+      fetchedAt: Date.now(),
+      field,
+      home: { aqi: 31, time: '2026-09-21T20:00' }
+    }
+    global.fetch = gridFetch()
+    await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.equal(fetchedUrls.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
+    assert.equal(sent[0][1].field.values.length, 315)
+  })
+
+  it('shares one flight between concurrent requests', async () => {
+    let calls = 0
+    global.fetch = async (url) => {
+      calls += 1
+      const count = url.match(/latitude=([^&]*)/)[1].split(',').length
+      return { ok: true, json: async () => aqiList(count) }
+    }
+    await Promise.all([
+      helper.fetchAqi({ lat: 40, lon: -100 }),
+      helper.fetchAqi({ lat: 40, lon: -100 })
+    ])
+    assert.equal(calls, 1)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
   })
 })
 

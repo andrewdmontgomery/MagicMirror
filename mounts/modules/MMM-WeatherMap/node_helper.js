@@ -30,6 +30,11 @@ const AQI_CHUNK_PAIRS = 350
  * count locations against the 600/min free tier, so ~350 nodes
  * per minute stays clear. Overridable in tests. */
 const AQI_REQUEST_GAP_MS = 60000
+/* Freshness window for the single-slot AQI cache, aligned to the
+ * frontend's aqiUpdateInterval (6h): anything the refresh accepts
+ * as fresh, a page load accepts. CAMS updates every 12h, so
+ * worst-case staleness matches what the mirror already accepts. */
+const AQI_CACHE_TTL_MS = 6 * 60 * 60 * 1000
 
 module.exports = NodeHelper.create({
   socketNotificationReceived: function (notification, payload) {
@@ -347,15 +352,38 @@ module.exports = NodeHelper.create({
   /* AQI fields: current US-AQI on the regional grid around the
    * requested point (one 315-location multi-location CAMS request,
    * keyless). Regional-only by design — the AQI view is clamped to
-   * this window, so no second grid can ever be needed. */
+   * this window, so no second grid can ever be needed. Fresh cache
+   * hits send with zero network (page loads cost nothing);
+   * concurrent requests share one in-flight round. */
   fetchAqi: async function ({ lat, lon } = {}) {
     if (lat === undefined || lon === undefined) {
       return
     }
+    const cached = this.aqiCache
+    if (
+      cached && cached.lat === lat && cached.lon === lon &&
+      Date.now() - cached.fetchedAt < AQI_CACHE_TTL_MS
+    ) {
+      this.sendSocketNotification('AQI_FIELDS_RESULT', { field: cached.field, home: cached.home })
+      return
+    }
+    if (!this.aqiFlight) {
+      this.aqiFlight = this.fetchAqiFresh(lat, lon).finally(() => {
+        this.aqiFlight = null
+      })
+    }
+    await this.aqiFlight
+  },
+
+  /* One network round for the regional grid: fetch, map, cache,
+   * send. Never rejects — errors send AQI_FIELDS_ERROR, so all
+   * single-flight sharers settle the same way. */
+  fetchAqiFresh: async function (lat, lon) {
     try {
       const params = this.aqiGridParams(lat, lon)
       const list = await this.fetchAqiGrid(params)
       const mapped = this.mapAqiResponse(list, params, lat, lon)
+      this.aqiCache = { lat, lon, fetchedAt: Date.now(), field: mapped.field, home: mapped.home }
       this.sendSocketNotification('AQI_FIELDS_RESULT', { field: mapped.field, home: mapped.home })
     } catch (error) {
       console.error('MMM-WeatherMap: failed to fetch AQI fields', error.message || error)
