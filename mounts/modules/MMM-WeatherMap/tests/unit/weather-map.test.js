@@ -1783,6 +1783,39 @@ describe('aqiConstraintFor', () => {
     )
   })
 
+  it('glides home when the viewport straddles the edge', () => {
+    // Center 0.2° inside the west edge, but the viewport hangs over
+    // it: re-applying the clamp would shove the camera to a
+    // viewport-fitting center — the same arbitrary jump as a clamp.
+    const edge = [[-103, 37], [-83, 47]]
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 7,
+        center: [-102.79, 41],
+        bounds: edge,
+        home: [-93, 41],
+        viewport: { halfLon: 2.3, halfLat: 1.6 }
+      }),
+      { type: 'correct', zoom: 7, center: [-93, 41] }
+    )
+  })
+
+  it('holds when the viewport fits inside the window', () => {
+    const edge = [[-103, 37], [-83, 47]]
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 7,
+        center: [-93, 41],
+        bounds: edge,
+        home: [-93, 41],
+        viewport: { halfLon: 2.3, halfLat: 1.6 }
+      }),
+      { type: 'none' }
+    )
+  })
+
   it('clears outside the aqi view regardless of camera', () => {
     assert.deepEqual(
       def.aqiConstraintFor.call(ctx(), { view: 'wind', zoom: 4, center: [0, 0], bounds: BOUNDS }),

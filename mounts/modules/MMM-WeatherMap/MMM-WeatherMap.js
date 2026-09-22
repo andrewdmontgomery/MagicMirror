@@ -283,24 +283,30 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Constraint decision for the shared map camera, pure given
-   * {view, zoom, center, bounds, home}: inside the AQI window →
-   * no-op (low zoom alone keeps the current center); an escaped
-   * center → the selected location, never the nearest clamped edge
-   * (a clamp lands somewhere arbitrary — neither where the user was
-   * nor anywhere meaningful — and reads as a bug); any other view
-   * → clear. The MapLibre calls themselves
+   * {view, zoom, center, bounds, home, viewport}: the whole viewport
+   * inside the AQI window → no-op (low zoom alone keeps the current
+   * center); anything else → the selected location, never the
+   * nearest clamped edge. Viewport (not center) is the unit because
+   * re-applying the clamp re-fits the viewport: a center just inside
+   * the edge with the viewport hanging over it would otherwise be
+   * shoved to a viewport-fitting center — the same arbitrary jump as
+   * a clamp. Any other view → clear. The MapLibre calls themselves
    * (setMinZoom/setMaxBounds/easeTo) stay untested glue, mirroring
    * the particle-GL pattern. Tested. */
-  aqiConstraintFor: function ({ view, zoom, center, bounds, home }) {
+  aqiConstraintFor: function ({ view, zoom, center, bounds, home, viewport }) {
     if (view !== 'aqi' || !bounds) {
       return view === 'aqi' ? { type: 'none' } : { type: 'clear' }
     }
     const [[west, south], [east, north]] = bounds
+    // Point-fit when the caller supplies no viewport (unit tests);
+    // the map always passes its live spans.
+    const halfLon = viewport ? viewport.halfLon : 0
+    const halfLat = viewport ? viewport.halfLat : 0
     const fixedZoom = Math.max(zoom, AQI_MIN_ZOOM)
-    const inside =
-      center[0] >= west && center[0] <= east &&
-      center[1] >= south && center[1] <= north
-    if (inside) {
+    const fits =
+      center[0] - halfLon >= west && center[0] + halfLon <= east &&
+      center[1] - halfLat >= south && center[1] + halfLat <= north
+    if (fits) {
       if (fixedZoom === zoom) {
         return { type: 'none' }
       }
@@ -311,6 +317,19 @@ Module.register('MMM-WeatherMap', {
       Math.min(Math.max(center[1], south), north)
     ]
     return { type: 'correct', zoom: fixedZoom, center: home ? [home[0], home[1]] : clamped }
+  },
+
+  /* Live viewport half-spans in degrees from MapLibre's own bounds —
+   * the same projection its clamp uses — inflated slightly so the
+   * fit predicate never reads looser than the clamp it predicts
+   * (an underestimate would re-admit the re-apply shove). */
+  aqiViewport: function () {
+    const bounds = this.map.getBounds()
+    const inflate = 1.01
+    return {
+      halfLon: ((bounds.getEast() - bounds.getWest()) / 2) * inflate,
+      halfLat: ((bounds.getNorth() - bounds.getSouth()) / 2) * inflate
+    }
   },
 
   /* Bounds for the AQI clamp: the fetched field geometry when it has
@@ -340,7 +359,8 @@ Module.register('MMM-WeatherMap', {
       zoom: this.map.getZoom(),
       center: [center.lng, center.lat],
       bounds,
-      home: this.homeLngLat()
+      home: this.homeLngLat(),
+      viewport: this.aqiViewport()
     })
     if (correction.type !== 'correct') {
       this.map.setMinZoom(AQI_MIN_ZOOM)
@@ -354,8 +374,6 @@ Module.register('MMM-WeatherMap', {
         this.map.setMaxBounds(bounds)
       }
     })
-    // essential: OS "reduce motion" would otherwise force duration 0
-    // (an instant jump) — this glide is the correction itself.
     this.map.easeTo({ center: correction.center, zoom: correction.zoom, duration: 800, essential: true })
   },
 
