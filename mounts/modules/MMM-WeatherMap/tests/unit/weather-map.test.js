@@ -745,43 +745,66 @@ describe('history-trail particles', () => {
     assert.ok(particles[0].maxAge >= 120 && particles[0].maxAge < 240)
   })
 
-  it('respawns leave a fading ghost instead of popping', () => {
+  it('respawns leave a collapsing ghost instead of popping', () => {
     const { ctx2d, map } = trailStub()
     const trail = [{ lon: 1, lat: 1.9 }, { lon: 1, lat: 2 }, { lon: 1, lat: 2.1 }]
     const particles = [{ lon: 1, lat: 2.1, age: 5000, maxAge: 10, trail }]
     const c = particleCtx(map, particles)
     withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
     assert.equal(c.ghosts.length, 1)
-    // The ghost keeps the full history including the final push
-    // (the test's trail array is the same live reference, so
-    // compare against a literal, not the mutated array).
-    assert.equal(c.ghosts[0].trail.length, 4)
-    assert.deepEqual(c.ghosts[0].trail.slice(0, 3), [
-      { lon: 1, lat: 1.9 },
+    // The head dot (final push) is dropped at death, and one tail
+    // point is consumed by the end-of-frame trim: the 4-point history
+    // draws as 3, then stores 2.
+    assert.equal(c.ghosts[0].trail.length, 2)
+    assert.deepEqual(c.ghosts[0].trail, [
       { lon: 1, lat: 2 },
       { lon: 1, lat: 2.1 }
     ])
     assert.notEqual(c.ghosts[0].trail, trail)
-    // Forty-six advancing frames run the 45-frame fade to zero.
+    // One more advancing frame consumes the last tail point.
     withoutRespawn(() => {
-      for (let i = 0; i < 45; i += 1) {
-        def.advectParticles.call(c, ctx2d, 400, 400)
-      }
+      def.advectParticles.call(c, ctx2d, 400, 400)
     })
     assert.equal(c.ghosts.length, 0)
   })
 
-  it('draws ghosts under live trails at their fading alpha', () => {
+  it('collapses the tail toward the death location at one point per frame', () => {
+    const { ctx2d, map } = trailStub()
+    const trail = [
+      { lon: 1, lat: 1.7 },
+      { lon: 1, lat: 1.8 },
+      { lon: 1, lat: 1.9 },
+      { lon: 1, lat: 2 },
+      { lon: 1, lat: 2.1 }
+    ]
+    const particles = [{ lon: 1, lat: 2.1, age: 5000, maxAge: 10, trail }]
+    const c = particleCtx(map, particles)
+    withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
+    // 6-point history (5 + final push) minus the head dot, minus one
+    // consumed tail point: stores 4, head pinned at the death trail.
+    assert.equal(c.ghosts[0].trail.length, 4)
+    const deathHead = { ...c.ghosts[0].trail[c.ghosts[0].trail.length - 1] }
+    withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
+    assert.equal(c.ghosts[0].trail.length, 3)
+    assert.deepEqual(c.ghosts[0].trail[c.ghosts[0].trail.length - 1], deathHead)
+    withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
+    assert.equal(c.ghosts[0].trail.length, 2)
+    assert.deepEqual(c.ghosts[0].trail[c.ghosts[0].trail.length - 1], deathHead)
+    withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
+    assert.equal(c.ghosts.length, 0)
+  })
+
+  it('draws ghosts under live trails at full alpha', () => {
     const alphas = []
     const { ctx2d, map } = trailStub()
     ctx2d.stroke = () => alphas.push(ctx2d.globalAlpha)
-    const ghosts = [{ trail: [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }], life: 0.5 }]
+    const ghosts = [{ trail: [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }], ratio: 1 }]
     const particles = [{ lon: 1, lat: 2, age: 0, maxAge: 1000, trail: [{ lon: 1, lat: 2 }] }]
     const c = particleCtx(map, particles)
     c.ghosts = ghosts
     withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
-    // Ghost first at 0.5, then the live particle at full alpha.
-    assert.deepEqual(alphas, [0.5, 1])
+    // Ghost first at full alpha, then the live particle at full alpha.
+    assert.deepEqual(alphas, [1, 1])
     assert.equal(ctx2d.globalAlpha, 1)
   })
 
@@ -789,9 +812,9 @@ describe('history-trail particles', () => {
     const { ctx2d, map } = trailStub()
     const ghosts = []
     for (let i = 0; i < 120; i += 1) {
-      ghosts.push({ trail: [{ lon: i, lat: 0 }, { lon: i, lat: 0.1 }], life: 1 })
+      ghosts.push({ trail: [{ lon: i, lat: 0 }, { lon: i, lat: 0.05 }, { lon: i, lat: 0.1 }], ratio: 1 })
     }
-    const particles = [{ lon: 1, lat: 2, age: 5000, maxAge: 10, trail: [{ lon: 1, lat: 2 }, { lon: 1, lat: 2.1 }] }]
+    const particles = [{ lon: 1, lat: 2, age: 5000, maxAge: 10, trail: [{ lon: 1, lat: 2 }, { lon: 1, lat: 2.05 }, { lon: 1, lat: 2.1 }] }]
     const c = particleCtx(map, particles)
     c.ghosts = ghosts
     withoutRespawn(() => def.advectParticles.call(c, ctx2d, 400, 400))
@@ -799,13 +822,13 @@ describe('history-trail particles', () => {
     assert.notEqual(c.ghosts[0].trail[0].lon, 0)
   })
 
-  it('paused redraws ghosts without decaying them', () => {
+  it('paused redraws ghosts without consuming them', () => {
     const { ctx2d, map } = trailStub()
     const c = particleCtx(map, [])
-    c.ghosts = [{ trail: [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }], life: 0.5 }]
+    c.ghosts = [{ trail: [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }], ratio: 1 }]
     def.advectParticles.call(c, ctx2d, 400, 400, false)
     assert.equal(c.ghosts.length, 1)
-    assert.equal(c.ghosts[0].life, 0.5)
+    assert.deepEqual(c.ghosts[0].trail, [{ lon: 0, lat: 0 }, { lon: 0.1, lat: 0.1 }])
   })
 
   it('redraws without advancing when paused, tracking pans', () => {
@@ -1288,8 +1311,26 @@ describe('legend colors', () => {
     const { map } = trailStub()
     const c = particleCtx(map, [])
     c.ghosts = []
-    def.ghostTrail.call(c, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 0.25)
+    def.ghostTrail.call(c, { trail: [{ lon: 0, lat: 0 }, { lon: 0.5, lat: 0.5 }, { lon: 1, lat: 1 }] }, 0.25)
     assert.equal(c.ghosts[0].ratio, 0.25)
+  })
+
+  it('drops the head dot on ghost creation', () => {
+    const { map } = trailStub()
+    const c = particleCtx(map, [])
+    c.ghosts = []
+    const trail = [{ lon: 0, lat: 0 }, { lon: 0.5, lat: 0.5 }, { lon: 1, lat: 1 }]
+    def.ghostTrail.call(c, { trail }, 1)
+    assert.deepEqual(c.ghosts[0].trail, [{ lon: 0, lat: 0 }, { lon: 0.5, lat: 0.5 }])
+    assert.notEqual(c.ghosts[0].trail, trail)
+  })
+
+  it('skips ghosts too short to collapse', () => {
+    const { map } = trailStub()
+    const c = particleCtx(map, [])
+    c.ghosts = []
+    def.ghostTrail.call(c, { trail: [{ lon: 0, lat: 0 }, { lon: 1, lat: 1 }] }, 1)
+    assert.equal(c.ghosts.length, 0)
   })
 })
 
