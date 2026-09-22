@@ -382,3 +382,111 @@ describe('fetchWindFields', () => {
     assert.equal(sent.length, 0)
   })
 })
+
+describe('aqiGridParams', () => {
+  it('builds a 15x21 window around the request with row 0 north', () => {
+    const params = helper.aqiGridParams(40, -100)
+    assert.equal(params.nx, 21)
+    assert.equal(params.ny, 15)
+    assert.equal(params.lat0, 47)
+    assert.equal(params.lon0, -110)
+    assert.equal(params.dLat, 1)
+    assert.equal(params.dLon, 1)
+    assert.equal(params.lats.length, 15)
+    assert.equal(params.lons.length, 21)
+    assert.equal(params.lats[0], 47)
+    assert.equal(params.lats[14], 33)
+    assert.equal(params.lons[0], -110)
+    assert.equal(params.lons[20], -90)
+  })
+})
+
+describe('mapAqiResponse', () => {
+  function indexedList (n) {
+    return Array.from({ length: n }, (_, i) => ({
+      latitude: 0,
+      longitude: 0,
+      current: { time: '2026-09-21T20:00', us_aqi: i }
+    }))
+  }
+
+  it('maps row-major values with row 0 at the north edge', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const { field } = helper.mapAqiResponse(indexedList(315), params, 40, -100)
+    assert.equal(field.nx, 21)
+    assert.equal(field.ny, 15)
+    assert.equal(field.values.length, 315)
+    assert.equal(field.values[0], 0)
+    assert.equal(field.values[20], 20)
+    assert.equal(field.values[21], 21)
+  })
+
+  it('samples home bilinearly at exact and fractional nodes', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const exact = helper.mapAqiResponse(indexedList(315), params, 40, -100)
+    assert.equal(exact.home.aqi, 7 * 21 + 10)
+    const frac = helper.mapAqiResponse(indexedList(315), params, 39.5, -99.5)
+    assert.equal(frac.home.aqi, (157 + 158 + 178 + 179) / 4)
+  })
+
+  it('falls back to nearest non-null when bilinear corners are null', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const list = indexedList(315).map((entry) => ({
+      ...entry,
+      current: { ...entry.current, us_aqi: null }
+    }))
+    list[100].current.us_aqi = 42
+    const { home } = helper.mapAqiResponse(list, params, 40, -100)
+    assert.equal(home.aqi, 42)
+  })
+
+  it('reports null home when the whole field is null', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const list = indexedList(315).map((entry) => ({
+      ...entry,
+      current: { ...entry.current, us_aqi: null }
+    }))
+    const { field, home } = helper.mapAqiResponse(list, params, 40, -100)
+    assert.ok(field.values.every((v) => v === null))
+    assert.equal(home.aqi, null)
+  })
+})
+
+describe('fetchAqi', () => {
+  function aqiList (value = 31) {
+    return Array.from({ length: 315 }, () => ({
+      latitude: 40,
+      longitude: -100,
+      current: { time: '2026-09-21T20:00', us_aqi: value }
+    }))
+  }
+
+  it('requests one multi-location current-us_aqi grid and maps the payload', async () => {
+    global.fetch = async (url) => {
+      fetchedUrls.push(url)
+      return { ok: true, json: async () => aqiList() }
+    }
+    await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.match(fetchedUrls[0], /air-quality-api\.open-meteo\.com.*current=us_aqi/)
+    assert.match(fetchedUrls[0], /latitude=.*%2C|latitude=.*,/)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
+    assert.equal(sent[0][1].field.values.length, 315)
+    assert.equal(sent[0][1].home.aqi, 31)
+  })
+
+  it('sends nothing without coordinates', async () => {
+    global.fetch = async () => {
+      throw new Error('fetch must not run without coordinates')
+    }
+    await helper.fetchAqi({})
+    assert.equal(sent.length, 0)
+  })
+
+  it('reports fetch failure so the frontend clears fetching', async () => {
+    global.fetch = async () => ({ ok: false, status: 500 })
+    await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_ERROR')
+  })
+})

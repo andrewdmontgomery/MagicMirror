@@ -16,6 +16,13 @@ const WIND_FIELD_STRIDE = 8
  * covers 1794). ~135 km/node — synoptic context, not detail. */
 const CONUS_STRIDE_ROW = 27
 const CONUS_STRIDE_COL = 46
+/* AQI grid window: ±7° lat / ±10° lon at 1° steps around the
+ * requested point (15x21 = 315 locations in one multi-location
+ * Open-Meteo request). CAMS native is ~0.4°, so 1° sampling plus
+ * frontend bilinear smoothing reproduces the model field. */
+const AQI_GRID_LAT_SPAN = 7
+const AQI_GRID_LON_SPAN = 10
+const AQI_GRID_STEP = 1
 
 module.exports = NodeHelper.create({
   socketNotificationReceived: function (notification, payload) {
@@ -30,6 +37,9 @@ module.exports = NodeHelper.create({
     }
     if (notification === 'GET_WIND_FIELDS') {
       this.fetchWindFields(payload || {})
+    }
+    if (notification === 'GET_AQI_FIELDS') {
+      this.fetchAqi(payload || {})
     }
   },
 
@@ -245,6 +255,118 @@ module.exports = NodeHelper.create({
       })
     } catch (error) {
       console.error('MMM-WeatherMap: failed to fetch wind summary', error)
+    }
+  },
+
+  /* AQI request grid: row-major lat/lon pairs over the window
+   * around (lat, lon), row 0 at the north edge to match the
+   * resampled wind grids. Pure — unit-tested. */
+  aqiGridParams: function (lat, lon) {
+    const ny = Math.round((2 * AQI_GRID_LAT_SPAN) / AQI_GRID_STEP) + 1
+    const nx = Math.round((2 * AQI_GRID_LON_SPAN) / AQI_GRID_STEP) + 1
+    const lat0 = lat + AQI_GRID_LAT_SPAN
+    const lon0 = lon - AQI_GRID_LON_SPAN
+    const lats = []
+    const lons = []
+    for (let r = 0; r < ny; r += 1) {
+      lats.push(lat0 - r * AQI_GRID_STEP)
+    }
+    for (let c = 0; c < nx; c += 1) {
+      lons.push(lon0 + c * AQI_GRID_STEP)
+    }
+    return { nx, ny, lat0, lon0, dLat: AQI_GRID_STEP, dLon: AQI_GRID_STEP, lats, lons }
+  },
+
+  /* Map a multi-location Open-Meteo AQI response onto the grid
+   * frame plus a bilinear home value. Null-tolerant: bilinear
+   * when all four corners exist, else nearest non-null, else
+   * null. Pure — unit-tested. */
+  mapAqiResponse: function (list, params, lat, lon) {
+    const values = list.map((entry) =>
+      entry && entry.current && typeof entry.current.us_aqi === 'number'
+        ? entry.current.us_aqi
+        : null
+    )
+    const field = {
+      nx: params.nx,
+      ny: params.ny,
+      lat0: params.lat0,
+      lon0: params.lon0,
+      dLat: params.dLat,
+      dLon: params.dLon,
+      values
+    }
+    const r = (params.lat0 - lat) / params.dLat
+    const c = (lon - params.lon0) / params.dLon
+    const r0 = Math.floor(r)
+    const c0 = Math.floor(c)
+    const fr = r - r0
+    const fc = c - c0
+    const at = (rr, cc) => {
+      if (rr < 0 || rr >= params.ny || cc < 0 || cc >= params.nx) {
+        return null
+      }
+      return values[rr * params.nx + cc]
+    }
+    const corners = [at(r0, c0), at(r0, c0 + 1), at(r0 + 1, c0), at(r0 + 1, c0 + 1)]
+    let aqi = null
+    if (corners.every((v) => v !== null)) {
+      aqi =
+        corners[0] * (1 - fr) * (1 - fc) +
+        corners[1] * (1 - fr) * fc +
+        corners[2] * fr * (1 - fc) +
+        corners[3] * fr * fc
+    } else {
+      let best = null
+      let bestDist = Infinity
+      values.forEach((v, i) => {
+        if (v === null) {
+          return
+        }
+        const dr = Math.floor(i / params.nx) - r
+        const dc = (i % params.nx) - c
+        const dist = dr * dr + dc * dc
+        if (dist < bestDist) {
+          bestDist = dist
+          best = v
+        }
+      })
+      aqi = best
+    }
+    const time = list.length > 0 && list[0] && list[0].current ? list[0].current.time : null
+    return { field, home: { aqi, time } }
+  },
+
+  /* AQI field: current US-AQI on the grid window around the
+   * requested point (one multi-location CAMS request, keyless).
+   * Emits AQI_FIELDS_RESULT with the field plus the bilinear home
+   * value the badge reads; AQI_FIELDS_ERROR on any failure. */
+  fetchAqi: async function ({ lat, lon } = {}) {
+    if (lat === undefined || lon === undefined) {
+      return
+    }
+    try {
+      const params = this.aqiGridParams(lat, lon)
+      const lats = params.lats.join(',')
+      const lons = params.lons.join(',')
+      const url =
+        `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lats}&longitude=${lons}` +
+        '&current=us_aqi'
+      const response = await fetch(url)
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      const json = await response.json()
+      const list = Array.isArray(json) ? json : [json]
+      const { field, home } = this.mapAqiResponse(list, params, lat, lon)
+      console.log(
+        `MMM-WeatherMap: AQI field ${field.values.length} nodes, ` +
+        `home ${home.aqi === null ? 'n/a' : home.aqi.toFixed(0)} US-AQI`
+      )
+      this.sendSocketNotification('AQI_FIELDS_RESULT', { field, home })
+    } catch (error) {
+      console.error('MMM-WeatherMap: failed to fetch AQI field', error.message || error)
+      this.sendSocketNotification('AQI_FIELDS_ERROR', {})
     }
   },
 
