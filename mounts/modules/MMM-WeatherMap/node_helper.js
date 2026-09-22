@@ -677,6 +677,7 @@ module.exports = NodeHelper.create({
       })
     } catch (error) {
       console.error('MMM-WeatherMap: failed to fetch radar frames', error)
+      this.sendSocketNotification('VECTOR_FRAMES_ERROR', {})
     }
   }
 })

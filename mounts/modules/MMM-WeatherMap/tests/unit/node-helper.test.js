@@ -41,8 +41,7 @@ afterEach(() => {
 })
 
 describe('fetchFrames', () => {
-  it('maps RainViewer past frames to host plus time/path pairs', async () => {
-    global.fetch = async (url) => {
+  it('maps RainViewer past frames to host plus time/path pairs', async () => {    global.fetch = async (url) => {
       fetchedUrls.push(url)
       return {
         ok: true,
@@ -60,6 +59,15 @@ describe('fetchFrames', () => {
       host: 'https://tilecache.rainviewer.com',
       frames: [{ time: 111, path: '/v2/radar/a' }, { time: 222, path: '/v2/radar/b' }]
     })
+  })
+
+  it('reports fetch failure for the status line', async () => {
+    global.fetch = async () => {
+      throw new Error('network down')
+    }
+    await helper.fetchFrames()
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'VECTOR_FRAMES_ERROR')
   })
 })
 
