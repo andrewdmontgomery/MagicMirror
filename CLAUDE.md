@@ -33,6 +33,7 @@ Load these with the skill tool when the task matches — never hand-roll the wor
 - `mm-vendor-assets` — vendoring icons, fonts, or JS libraries. Use when adding any third-party files (verify, version, license).
 - `new-mm-module` — scaffolding a new custom module. Use when creating one.
 - `hrrr-model-data`, `maplibre-particle-layer` — domain references for the WeatherMap wind pipeline (HRRR fetch/decode, particle rendering). Use when touching wind grids or particles.
+- `openmeteo` (`.claude/skills/`) — Open-Meteo weather/air-quality API patterns (multi-location grids, chunking, rate limits, CAMS domains). Use when fetching Open-Meteo data or sizing refresh cadence.
 
 ## Architecture
 
