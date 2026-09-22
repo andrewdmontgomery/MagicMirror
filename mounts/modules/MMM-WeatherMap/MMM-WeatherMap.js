@@ -804,19 +804,25 @@ Module.register('MMM-WeatherMap', {
       this.mapReady = true
       // Callout tracking lives for the map's whole life (the
       // callout node itself comes and goes per view).
-      this.map.on('move', () => this.positionWindCallout())
-      this.map.on('resize', () => this.positionWindCallout())
+      const repositionCallouts = () => {
+        this.positionWindCallout()
+        this.positionAqiCallout()
+      }
+      this.map.on('move', repositionCallouts)
+      this.map.on('resize', repositionCallouts)
       this.map.on('moveend', () => this.scheduleRecenter())
-      if (!this.isWindView()) {
+      if (this.isWindView()) {
+        this.positionWindCallout()
+        this.ensureParticleLayer()
+      } else if (this.isAqiView()) {
+        this.positionAqiCallout()
+        this.ensureAqiLayer()
+      } else {
         this.addRadarLayer()
       }
       this.addMarkers()
       this.applyPosition()
       this.restartAnimation()
-      if (this.isWindView()) {
-        this.positionWindCallout()
-        this.ensureParticleLayer()
-      }
     })
   },
 
@@ -828,7 +834,16 @@ Module.register('MMM-WeatherMap', {
       onAdd: function () {
         const container = document.createElement('div')
         container.className = 'maplibregl-ctrl maplibregl-ctrl-group vector-view-wrap'
-        const icons = { precip: '🌧', wind: '💨', aqi: '🌫️' }
+        const icons = { precip: '🌧', wind: '💨' }
+        // Haze mark as inline SVG, not emoji: the fog emoji renders
+        // as tofu or monochrome on systems without color emoji fonts
+        // (same reason the reset control is SVG).
+        const aqiIcon =
+          '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">' +
+          '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' +
+          '<line x1="4" y1="9" x2="20" y2="9"/>' +
+          '<line x1="7" y1="13" x2="17" y2="13"/>' +
+          '<line x1="4" y1="17" x2="20" y2="17"/></g></svg>'
         const labels = { precip: 'Precipitation view', wind: 'Wind view', aqi: 'Air quality view' }
         VIEWS.forEach((view) => {
           const button = document.createElement('button')
@@ -836,7 +851,11 @@ Module.register('MMM-WeatherMap', {
           button.setAttribute('aria-label', labels[view] || view)
           button.setAttribute('title', labels[view] || view)
           button.setAttribute('aria-pressed', module.view === view ? 'true' : 'false')
-          button.textContent = icons[view] || view
+          if (view === 'aqi') {
+            button.innerHTML = aqiIcon
+          } else {
+            button.textContent = icons[view] || view
+          }
           button.addEventListener('click', () => module.setView(view))
           container.appendChild(button)
           module.viewButtons = module.viewButtons || {}
