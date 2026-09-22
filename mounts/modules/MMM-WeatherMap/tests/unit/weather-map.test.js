@@ -1762,6 +1762,17 @@ describe('aqiConstraintFor', () => {
       { type: 'none' }
     )
   })
+
+  it('clears from any camera without correction on exit', () => {
+    // Leaving AQI never moves the camera: even a wildly escaped
+    // camera yields 'clear' (constraints off, no ease), not 'correct'.
+    for (const view of ['precip', 'wind']) {
+      assert.deepEqual(
+        def.aqiConstraintFor.call(ctx(), { view, zoom: 2, center: [500, -500], bounds: BOUNDS }),
+        { type: 'clear' }
+      )
+    }
+  })
 })
 
 describe('updateAqiImage', () => {

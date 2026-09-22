@@ -347,15 +347,37 @@ Module.register('MMM-WeatherMap', {
     return this.defaultAqiBounds(this.config.lat, this.config.lon)
   },
 
-  /* Clamp the shared map to the regional window. No camera move here —
-   * the entry glide corrects an escaped camera; these only prevent
-   * escape. Untested glue (no map under node --test). */
+  /* Clamp the shared map to the regional window. A camera already
+   * inside just gains the clamp; an escaped one glides home first
+   * (free — constraints land on moveend) so the correction reads as
+   * one motion under the view crossfade instead of a snap. Leaving
+   * AQI never comes here — clearViewConstraints releases both with
+   * no camera call, ever. Untested glue (no map under node --test). */
   applyViewConstraints: function () {
     if (!this.map) {
       return
     }
-    this.map.setMinZoom(AQI_MIN_ZOOM)
-    this.map.setMaxBounds(this.aqiViewBounds())
+    const bounds = this.aqiViewBounds()
+    const center = this.map.getCenter()
+    const correction = this.aqiConstraintFor({
+      view: 'aqi',
+      zoom: this.map.getZoom(),
+      center: [center.lng, center.lat],
+      bounds
+    })
+    if (correction.type !== 'correct') {
+      this.map.setMinZoom(AQI_MIN_ZOOM)
+      this.map.setMaxBounds(bounds)
+      return
+    }
+    this.map.once('moveend', () => {
+      // A mid-glide exit must not clamp the new view.
+      if (this.map && this.isAqiView()) {
+        this.map.setMinZoom(AQI_MIN_ZOOM)
+        this.map.setMaxBounds(bounds)
+      }
+    })
+    this.map.easeTo({ center: correction.center, zoom: correction.zoom, duration: 800 })
   },
 
   /* Release the AQI clamp — defaults are unconstrained, so clearing
