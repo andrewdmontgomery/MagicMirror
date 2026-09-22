@@ -1195,6 +1195,10 @@ Module.register('MMM-WeatherMap', {
         id: 'aqi-wash',
         type: 'raster',
         source: 'aqi-wash',
+        // The windowed field fills the 420px map down to about
+        // zoom 5; wider than that the bounds read as a square,
+        // so the layer drops out instead of showing edges.
+        minzoom: 5,
         paint: {
           'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
           'raster-opacity-transition': { duration: 350, delay: 0 }
