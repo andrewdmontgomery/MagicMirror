@@ -1801,6 +1801,23 @@ describe('aqiConstraintFor', () => {
     )
   })
 
+  it('stops animation and clears constraints without camera calls on exit', () => {
+    const calls = []
+    const noCamera = (name) => () => { throw new Error(`camera must not move on exit (${name})`) }
+    const map = {
+      stop: () => calls.push('stop'),
+      setMaxBounds: (bounds) => calls.push(['setMaxBounds', bounds]),
+      setMinZoom: (zoom) => calls.push(['setMinZoom', zoom]),
+      easeTo: noCamera('easeTo'),
+      jumpTo: noCamera('jumpTo'),
+      flyTo: noCamera('flyTo'),
+      setCenter: noCamera('setCenter'),
+      setZoom: noCamera('setZoom')
+    }
+    def.clearViewConstraints.call(ctx({ map, view: 'wind' }))
+    assert.deepEqual(calls, ['stop', ['setMaxBounds', null], ['setMinZoom', null]])
+  })
+
   it('clears from any camera without correction on exit', () => {
     // Leaving AQI never moves the camera: even a wildly escaped
     // camera yields 'clear' (constraints off, no ease), not 'correct'.

@@ -358,11 +358,14 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Release the AQI clamp — defaults are unconstrained, so clearing
-   * restores the other views' freedom. Never moves the camera. */
+   * restores the other views' freedom. Halts an entry glide still in
+   * flight first: without this the ease runs on into the new view
+   * and the camera drifts there. Never moves the camera itself. */
   clearViewConstraints: function () {
     if (!this.map) {
       return
     }
+    this.map.stop()
     this.map.setMaxBounds(null)
     this.map.setMinZoom(null)
   },
