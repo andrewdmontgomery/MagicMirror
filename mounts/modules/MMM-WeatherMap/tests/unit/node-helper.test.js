@@ -497,7 +497,7 @@ describe('fetchAqi', () => {
     }
   }
 
-  it('requests regional plus continental grids and maps both', async () => {
+  it('requests the regional grid and maps the payload', async () => {
     const waits = []
     const realWait = helper.waitMs
     helper.waitMs = async (ms) => { waits.push(ms) }
@@ -507,25 +507,17 @@ describe('fetchAqi', () => {
     } finally {
       helper.waitMs = realWait
     }
-    assert.equal(fetchedUrls.length, 4)
-    for (const url of fetchedUrls) {
-      assert.match(url, /air-quality-api\.open-meteo\.com.*current=us_aqi/)
-      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
-      const longitudes = url.match(/longitude=([^&]*)/)[1].split(',')
-      assert.equal(latitudes.length, longitudes.length)
-      assert.ok(latitudes.length <= 350)
-    }
-    // Regional first (badge in seconds), full payload when wide lands.
-    assert.equal(sent.length, 2)
+    // Regional only: one request, one notification.
+    assert.equal(fetchedUrls.length, 1)
+    assert.match(fetchedUrls[0], /air-quality-api\.open-meteo\.com.*current=us_aqi/)
+    const latitudes = fetchedUrls[0].match(/latitude=([^&]*)/)[1].split(',')
+    assert.equal(latitudes.length, 315)
+    assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
     assert.equal(sent[0][1].field.values.length, 315)
     assert.equal(sent[0][1].continental, undefined)
-    assert.equal(sent[1][0], 'AQI_FIELDS_RESULT')
-    assert.equal(sent[1][1].field.values.length, 315)
-    assert.equal(sent[1][1].continental.values.length, 24 * 42)
-    assert.equal(sent[1][1].home.aqi, 31)
-    // Rate-limit gaps between the wide chunks only.
-    assert.deepEqual(waits, [60000, 60000])
+    assert.equal(sent[0][1].home.aqi, 31)
+    assert.deepEqual(waits, [])
   })
 
   it('sends nothing without coordinates', async () => {
@@ -541,5 +533,92 @@ describe('fetchAqi', () => {
     await helper.fetchAqi({ lat: 40, lon: -100 })
     assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_ERROR')
+  })
+})
+
+describe('fetchAqiWide', () => {
+  function wideFetch () {
+    return async (url) => {
+      fetchedUrls.push(url)
+      const count = url.match(/latitude=([^&]*)/)[1].split(',').length
+      return {
+        ok: true,
+        json: async () => Array.from({ length: count }, () => ({
+          latitude: 50,
+          longitude: -100,
+          current: { time: '2026-09-21T20:00', us_aqi: 40 }
+        }))
+      }
+    }
+  }
+
+  it('fetches the fixed continental window in chunks', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    try {
+      global.fetch = wideFetch()
+      await helper.fetchAqiWide()
+    } finally {
+      helper.waitMs = realWait
+    }
+    assert.equal(fetchedUrls.length, 3)
+    for (const url of fetchedUrls) {
+      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
+      assert.ok(latitudes.length <= 350)
+    }
+    assert.match(fetchedUrls[0], /latitude=60/)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_WIDE_RESULT')
+    assert.equal(sent[0][1].continental.values.length, 24 * 42)
+    assert.deepEqual(waits, [60000, 60000])
+  })
+
+  it('reports wide failure without touching the regional field', async () => {
+    const realWait = helper.waitMs
+    helper.waitMs = async () => {}
+    try {
+      global.fetch = async () => ({ ok: false, status: 500 })
+      await helper.fetchAqiWide()
+    } finally {
+      helper.waitMs = realWait
+    }
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_WIDE_ERROR')
+  })
+})
+
+describe('fetchAqiChunk 429 handling', () => {
+  it('retries once after the Retry-After delay, then throws', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    let calls = 0
+    try {
+      global.fetch = async () => {
+        calls += 1
+        if (calls === 1) {
+          return { ok: false, status: 429, headers: { get: (name) => (name === 'retry-after' ? '2' : null) } }
+        }
+        return { ok: true, json: async () => [] }
+      }
+      const list = await helper.fetchAqiChunk([[40, -100]])
+      assert.deepEqual(waits, [2000])
+      assert.deepEqual(list, [])
+      assert.equal(calls, 2)
+    } finally {
+      helper.waitMs = realWait
+    }
+  })
+
+  it('throws after the retry also fails', async () => {
+    const realWait = helper.waitMs
+    helper.waitMs = async () => {}
+    try {
+      global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null } })
+      await assert.rejects(helper.fetchAqiChunk([[40, -100]]), /429/)
+    } finally {
+      helper.waitMs = realWait
+    }
   })
 })
