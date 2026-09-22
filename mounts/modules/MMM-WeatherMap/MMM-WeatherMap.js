@@ -1,18 +1,20 @@
 /* MMM-WeatherMap — animated weather map on a CARTO dark basemap (MapLibre GL):
- * rain radar, wind particles, history/future timeline.
+ * rain radar, wind particles, air-quality wash, history/future timeline.
  *
- * Views: the map renders one view at a time ("precip" today, "wind" new).
- * The VIEWS registry is the extension point for future views (e.g. AQI):
- * add the key here, a legend branch in legendDiv(), a timeline branch in
- * timelineDiv(), and a layer branch in initMap()/restartAnimation().
+ * Views: the map renders one view at a time. The VIEWS registry is the
+ * extension point for future views: add the key here, a legend branch in
+ * legendDiv(), a timeline branch in timelineDiv(), and a layer branch in
+ * initMap()/restartAnimation(). The AQI view is static (no timeline) —
+ * rebuildOverlays() skips its timeline chrome.
  * View selection is manual for now (viewControl + WEATHERMAP_SET_VIEW);
  * a future auto-selector can drive the same setView() — e.g. default to
  * whichever of rain/AQI/wind is most relevant.
  *
- * Default view: MMM-WeatherWatcher is that auto-selector for the two
- * current views — it sends WEATHERMAP_SET_VIEW with "precip" when rain
- * is in the hourly forecast, "wind" otherwise. defaultView below only
- * covers the window before the first forecast arrives.
+ * Default view: MMM-WeatherWatcher is that auto-selector for the three
+ * current views — it sends WEATHERMAP_SET_VIEW with "aqi" when the home
+ * AQI reaches its threshold, "precip" when rain is in the hourly
+ * forecast, "wind" otherwise. defaultView below only covers the window
+ * before the first data arrives.
  */
 
 /* Frame-layer ceiling: RainViewer serves ~13 past frames; anything beyond
@@ -20,7 +22,7 @@
 const MAX_RADAR_LAYERS = 64
 
 /* Supported map views. Order here is the toggle-button order. */
-const VIEWS = ['precip', 'wind']
+const VIEWS = ['precip', 'wind', 'aqi']
 
 /* Wind particles per frame. Canvas 2D at 420px is trivial; pause on suspend. */
 const WIND_PARTICLE_COUNT = 800
@@ -38,6 +40,17 @@ const WIND_COLOR_STOPS = [
   [0, [81, 177, 222]],
   [0.55, [127, 212, 242]],
   [1, [232, 246, 253]]
+]
+/* US EPA AQI stops (AQI → RGB), mirroring .vector-legend-bar-aqi in
+ * MMM-WeatherMap.css — keep the two in sync. */
+const AQI_COLOR_STOPS = [
+  [0, [0, 228, 0]],
+  [50, [0, 228, 0]],
+  [100, [255, 255, 0]],
+  [150, [255, 126, 0]],
+  [200, [255, 0, 0]],
+  [300, [143, 63, 151]],
+  [500, [126, 0, 35]]
 ]
 /* Field components arrive in m/s; the drift scale runs in legend units. */
 const MS_TO_MPH = 2.23694
@@ -64,6 +77,8 @@ Module.register('MMM-WeatherMap', {
       { lat: 44.8480, lng: -93.0430, color: 'red' }
     ],
     radarOpacity: 0.45,
+    /* AQI wash opacity (verified against the live preview). */
+    aqiOpacity: 0.8,
     animationSpeedMs: 800,
     showLegend: true,
     showTimeline: true,
@@ -80,6 +95,11 @@ Module.register('MMM-WeatherMap', {
     /* HRRR gridded field refresh — the model runs hourly but the
      * field barely changes at mirror scale. */
     windFieldUpdateInterval: 6 * 60 * 60 * 1000,
+    /* CAMS AQI refresh — the global model updates every 12h, and
+     * the free tier caps at 10k calls/day (multi-location grids
+     * may meter per location: 1323 nodes/refresh), so 6h polling
+     * stays fresh with wide margin. */
+    aqiUpdateInterval: 6 * 60 * 60 * 1000,
     windHoursPast: 4,
     windHoursFuture: 12
   },
@@ -96,16 +116,20 @@ Module.register('MMM-WeatherMap', {
     this.stepStart = null
     // Pause offset per view (mirrors `playing`): pausing rain
     // must not shift the wind resume point, and vice versa.
-    this.pausedElapsed = { precip: null, wind: null }
+    this.pausedElapsed = { precip: null, wind: null, aqi: null }
     this.progressRaf = null
     // Play state persists separately per map type: pausing rain
     // never stills the wind view, and vice versa.
-    this.playing = { precip: true, wind: true }
+    this.playing = { precip: true, wind: true, aqi: true }
     this.positionIndex = 0
     this.loopCount = 0
     this.frameTimer = null
     this.framesKey = null
     this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : 'wind'
+    this.aqi = null
+    this.wideFetching = false
+    this.feeds = { precip: {}, wind: {}, aqi: {} }
+    this.statusEl = null
     this.wind = null
     this.windIndex = 0
     this.windFields = []
@@ -127,6 +151,7 @@ Module.register('MMM-WeatherMap', {
     this.getFrames()
     this.getWind()
     this.getWindFields()
+    this.getAqi()
     setInterval(() => {
       this.getFrames()
     }, this.config.updateInterval)
@@ -136,6 +161,14 @@ Module.register('MMM-WeatherMap', {
     setInterval(() => {
       this.getWindFields()
     }, this.config.windFieldUpdateInterval)
+    setInterval(() => {
+      this.getAqi()
+      // Continental refresh only once demand-fetched: an unused
+      // wide grid is three requests spent for nothing.
+      if (this.aqi && this.aqi.continental) {
+        this.getAqiWide()
+      }
+    }, this.config.aqiUpdateInterval)
   },
 
   /* MagicMirror lifecycle: drop the particle layer when hidden
@@ -155,15 +188,56 @@ Module.register('MMM-WeatherMap', {
   },
 
   getFrames: function () {
+    this.markFeed('precip', 'fetching')
     this.sendSocketNotification('GET_VECTOR_FRAMES', {})
   },
 
   getWind: function () {
+    this.markFeed('wind', 'fetching')
     this.sendSocketNotification('GET_WIND_SUMMARY', {
       lat: this.config.lat,
       lon: this.config.lon,
       units: this.config.units
     })
+  },
+
+  /* Request the AQI grid around the configured home point. The
+   * window is fixed (no pan-refetch): ±7° lat / ±10° lon covers
+   * plausible pans at the mirror's zooms. */
+  getAqi: function () {
+    this.markFeed('aqi', 'fetching')
+    this.sendSocketNotification('GET_AQI_FIELDS', {
+      lat: this.config.lat,
+      lon: this.config.lon
+    })
+  },
+
+  /* Request the continental context grid. In-flight guarded; the
+   * response merges into the cached regional payload. */
+  getAqiWide: function () {
+    this.wideFetching = true
+    this.sendSocketNotification('GET_AQI_WIDE', {})
+  },
+
+  /* Demand-fetch the continental field once a zoom-out would expose
+   * the regional window's boundary (below zoom 6, one level above
+   * the regional layer's floor). */
+  maybeFetchWide: function () {
+    if (this.wideFetchNeeded()) {
+      this.getAqiWide()
+    }
+  },
+
+  /* Pure predicate for the demand fetch: zoomed out, no
+   * continental cached, none in flight, map ready. Tested. */
+  wideFetchNeeded: function () {
+    if (!this.map || !this.mapReady || this.wideFetching) {
+      return false
+    }
+    if (this.aqi && this.aqi.continental) {
+      return false
+    }
+    return this.map.getZoom() < 6
   },
 
   /* Request hourly fields centered on the given point (the map
@@ -175,6 +249,7 @@ Module.register('MMM-WeatherMap', {
       lon = this.config.lon
     }
     this.fieldsFetching = true
+    this.markFeed('wind', 'fetching')
     this.sendSocketNotification('GET_WIND_FIELDS', { lat, lon })
   },
 
@@ -219,6 +294,10 @@ Module.register('MMM-WeatherMap', {
     return this.view === 'wind'
   },
 
+  isAqiView: function () {
+    return this.view === 'aqi'
+  },
+
   /* Play state for the active view (each map type remembers its
    * own). Pure — tested. */
   isPlaying: function () {
@@ -240,6 +319,7 @@ Module.register('MMM-WeatherMap', {
     if (this.mapDiv) {
       this.rebuildOverlays()
     }
+    this.updateStatus()
     return true
   },
 
@@ -256,14 +336,26 @@ Module.register('MMM-WeatherMap', {
     if (this.isWindView()) {
       this.fadeRadarTo(0)
       this.scheduleRadarHide()
+      this.fadeAqiTo(0)
+      this.scheduleAqiHide()
       if (this.mapReady) {
         this.ensureParticleLayer()
       }
+    } else if (this.isAqiView()) {
+      this.fadeParticlesOut()
+      this.fadeRadarTo(0)
+      this.scheduleRadarHide()
+      this.setAqiLayerVisible(true)
+      this.fadeAqiTo(this.config.aqiOpacity)
+      this.updateAqiImage()
     } else {
       this.fadeParticlesOut()
       this.setRadarLayersVisible(true)
+      this.fadeAqiTo(0)
+      this.scheduleAqiHide()
     }
     this.positionWindCallout()
+    this.positionAqiCallout()
   },
 
   /* One fade step toward a 0..1 target (~0.33s at 60fps). Pure. */
@@ -507,6 +599,7 @@ Module.register('MMM-WeatherMap', {
       if (payload && Array.isArray(payload.fields) && payload.fields.length > 0) {
         this.windFields = payload.fields
         this.windIndex = this.defaultWindIndex()
+        this.markFeed('wind', 'ready')
         // In-place refresh (badge/timeline/layers follow via
         // the animation restart) — never updateDom: the module
         // fade would flash the whole view every data refresh.
@@ -514,12 +607,44 @@ Module.register('MMM-WeatherMap', {
       }
     } else if (notification === 'WIND_FIELDS_ERROR') {
       this.fieldsFetching = false
+      this.markFeed('wind', 'error')
     } else if (notification === 'WIND_SUMMARY_RESULT') {
       if (payload && payload.hourly) {
         this.wind = payload
         this.windIndex = this.defaultWindIndex()
+        this.markFeed('wind', 'ready')
         this.syncContentToView()
       }
+    } else if (notification === 'AQI_FIELDS_RESULT') {
+      if (payload && payload.field) {
+        this.aqi = payload
+        this.markFeed('aqi', 'ready')
+        // In-place refresh (badge plus layer follow) — never
+        // updateDom: the module fade would flash the whole view
+        // every data refresh.
+        this.updateAqiImage()
+        this.updateAqiBadge()
+        const home = payload.home || {}
+        if (typeof this.sendNotification === 'function') {
+          this.sendNotification('WEATHERMAP_AQI_UPDATED', {
+            aqi: home.aqi !== undefined ? home.aqi : null,
+            time: home.time || null
+          })
+        }
+      }
+    } else if (notification === 'AQI_FIELDS_ERROR') {
+      this.markFeed('aqi', 'error')
+      // Keep the previous field (if any) — the next refresh or
+      // page load retries.
+    } else if (notification === 'AQI_WIDE_RESULT') {
+      this.wideFetching = false
+      if (payload && payload.continental && this.aqi) {
+        this.aqi.continental = payload.continental
+        this.markFeed('aqi', 'ready')
+        this.updateAqiImage()
+      }
+    } else if (notification === 'AQI_WIDE_ERROR') {
+      this.wideFetching = false
     } else if (notification === 'VECTOR_FRAMES_RESULT') {
       if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
         const key = `${payload.frames[0].time}-${payload.frames[payload.frames.length - 1].time}`
@@ -531,8 +656,11 @@ Module.register('MMM-WeatherMap', {
         }
         this.frames = payload
         this.frameIndex = 0
+        this.markFeed('precip', 'ready')
         this.restartAnimation()
       }
+    } else if (notification === 'VECTOR_FRAMES_ERROR') {
+      this.markFeed('precip', 'error')
     }
   },
 
@@ -603,6 +731,7 @@ Module.register('MMM-WeatherMap', {
       this.rebuildOverlays()
       wrapper.appendChild(this.mapDiv)
       wrapper.appendChild(this.attributionDiv())
+      this.updateStatus()
       setTimeout(() => {
         if (!this.map) {
           this.renderMapView(this.mapDiv)
@@ -623,6 +752,7 @@ Module.register('MMM-WeatherMap', {
     this.mapDiv = mapDiv
     this.rebuildOverlays()
     wrapper.appendChild(this.attributionDiv())
+    this.updateStatus()
 
     // Fresh map only: init after insert, when the new container
     // has dimensions.
@@ -638,7 +768,7 @@ Module.register('MMM-WeatherMap', {
     if (!this.mapDiv) {
       return
     }
-    ['vector-legend', 'vector-timeline', 'vector-wind-marker'].forEach((cls) => {
+    ['vector-legend', 'vector-timeline', 'vector-wind-marker', 'vector-aqi-marker'].forEach((cls) => {
       const old = this.mapDiv.querySelector(`.${cls}`)
       if (old) {
         old.remove()
@@ -650,12 +780,21 @@ Module.register('MMM-WeatherMap', {
 
     if (this.isWindView()) {
       this.mapDiv.appendChild(this.buildCallout())
+      this.aqiCallout = null
+      this.aqiBadge = null
+    } else if (this.isAqiView()) {
+      this.mapDiv.appendChild(this.buildAqiCallout())
+      this.windCallout = null
+      this.windBadge = null
     } else {
       this.windCallout = null
       this.windBadge = null
+      this.aqiCallout = null
+      this.aqiBadge = null
     }
 
-    if (this.config.showTimeline) {
+    // The AQI view is static: no timeline chrome at all.
+    if (this.config.showTimeline && !this.isAqiView()) {
       this.mapDiv.appendChild(this.timelineDiv())
     }
     // Fresh callout nodes default to left:0/top:0 (under the legend)
@@ -664,6 +803,7 @@ Module.register('MMM-WeatherMap', {
     // lands on the marker immediately instead of waiting for the next
     // map move. No-op without a map or outside the wind view.
     this.positionWindCallout()
+    this.positionAqiCallout()
   },
 
   /* Location callout: a plain overlay sibling above the map canvas.
@@ -729,23 +869,30 @@ Module.register('MMM-WeatherMap', {
       this.mapReady = true
       // Callout tracking lives for the map's whole life (the
       // callout node itself comes and goes per view).
-      this.map.on('move', () => this.positionWindCallout())
-      this.map.on('resize', () => this.positionWindCallout())
+      const repositionCallouts = () => {
+        this.positionWindCallout()
+        this.positionAqiCallout()
+      }
+      this.map.on('move', repositionCallouts)
+      this.map.on('resize', repositionCallouts)
       this.map.on('moveend', () => this.scheduleRecenter())
-      if (!this.isWindView()) {
+      this.map.on('moveend', () => this.maybeFetchWide())
+      if (this.isWindView()) {
+        this.positionWindCallout()
+        this.ensureParticleLayer()
+      } else if (this.isAqiView()) {
+        this.positionAqiCallout()
+        this.ensureAqiLayer()
+      } else {
         this.addRadarLayer()
       }
       this.addMarkers()
       this.applyPosition()
       this.restartAnimation()
-      if (this.isWindView()) {
-        this.positionWindCallout()
-        this.ensureParticleLayer()
-      }
     })
   },
 
-  /* Manual view toggle (precip / wind today; more views later).
+  /* Manual view toggle (precip / wind / aqi).
    * One button per VIEWS entry; the active view is pressed. */
   viewControl: function () {
     const module = this
@@ -754,14 +901,27 @@ Module.register('MMM-WeatherMap', {
         const container = document.createElement('div')
         container.className = 'maplibregl-ctrl maplibregl-ctrl-group vector-view-wrap'
         const icons = { precip: '🌧', wind: '💨' }
-        const labels = { precip: 'Precipitation view', wind: 'Wind view' }
+        // Haze mark as inline SVG, not emoji: the fog emoji renders
+        // as tofu or monochrome on systems without color emoji fonts
+        // (same reason the reset control is SVG).
+        const aqiIcon =
+          '<svg viewBox="0 0 24 24" width="17" height="17" aria-hidden="true">' +
+          '<g fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round">' +
+          '<line x1="4" y1="9" x2="20" y2="9"/>' +
+          '<line x1="7" y1="13" x2="17" y2="13"/>' +
+          '<line x1="4" y1="17" x2="20" y2="17"/></g></svg>'
+        const labels = { precip: 'Precipitation view', wind: 'Wind view', aqi: 'Air quality view' }
         VIEWS.forEach((view) => {
           const button = document.createElement('button')
           button.className = 'vector-view' + (module.view === view ? ' vector-view-active' : '')
           button.setAttribute('aria-label', labels[view] || view)
           button.setAttribute('title', labels[view] || view)
           button.setAttribute('aria-pressed', module.view === view ? 'true' : 'false')
-          button.textContent = icons[view] || view
+          if (view === 'aqi') {
+            button.innerHTML = aqiIcon
+          } else {
+            button.textContent = icons[view] || view
+          }
           button.addEventListener('click', () => module.setView(view))
           container.appendChild(button)
           module.viewButtons = module.viewButtons || {}
@@ -811,6 +971,9 @@ Module.register('MMM-WeatherMap', {
     if (this.isWindView()) {
       return this.windLegendDiv()
     }
+    if (this.isAqiView()) {
+      return this.aqiLegendDiv()
+    }
     const legend = document.createElement('div')
     legend.className = 'vector-legend'
     legend.innerHTML =
@@ -820,6 +983,22 @@ Module.register('MMM-WeatherMap', {
       '<div class="vector-legend-labels">' +
       '<span>Extreme</span><span>Heavy</span><span>Moderate</span><span>Light</span>' +
       '</div></div>'
+    return legend
+  },
+
+  /* AQI legend: the same pill layout as the other views, titled
+   * "AQI (US)" over the EPA band scale with a CAMS source line. */
+  aqiLegendDiv: function () {
+    const legend = document.createElement('div')
+    legend.className = 'vector-legend vector-legend-aqi'
+    legend.innerHTML =
+      '<div class="vector-legend-title">AQI (US)</div>' +
+      '<div class="vector-legend-body">' +
+      '<div class="vector-legend-bar vector-legend-bar-aqi"></div>' +
+      '<div class="vector-legend-labels">' +
+      '<span>300+</span><span>200</span><span>150</span><span>100</span><span>50</span><span>0</span>' +
+      '</div></div>' +
+      '<div class="vector-legend-source">CAMS via Open-Meteo</div>'
     return legend
   },
 
@@ -928,15 +1107,299 @@ Module.register('MMM-WeatherMap', {
     this.windBadge.innerHTML = this.windBadgeSvg(direction, speed, scale.unit.toUpperCase())
   },
 
-  /* Static attribution caption (CARTO/OSM terms require it visible).
-   * Replaces the stock toggle: dimmer, smaller, and below the map. */
+  /* Location callout for the AQI view: the same circle-and-tail
+   * chrome as the wind badge, reading the home AQI number over
+   * "AQI" with the ring stroked in the value's EPA color. */
+  buildAqiCallout: function () {
+    const callout = document.createElement('div')
+    callout.className = 'vector-aqi-marker'
+    const badge = document.createElement('div')
+    badge.className = 'vector-aqi-badge'
+    callout.appendChild(badge)
+    this.aqiCallout = callout
+    this.aqiBadge = badge
+    this.updateAqiBadge()
+    return callout
+  },
+
+  /* AQI badge SVG: same 62×66 geometry as the wind badge, minus the
+   * compass row — the value sits larger in its place. */
+  aqiBadgeSvg: function (value, color) {
+    const stroke = color ? `rgb(${color[0]}, ${color[1]}, ${color[2]})` : 'rgba(255,255,255,0.9)'
+    return (
+      '<svg viewBox="0 0 62 66" width="62" height="66" aria-hidden="true">' +
+      `<path d="M24.53,53.15 L31,62 L37.47,53.15 A25,25 0 1 0 24.53,53.15 Z" fill="#2C353C" stroke="${stroke}" stroke-width="2" stroke-linejoin="round"/>` +
+      `<text class="vector-aqi-badge-value" x="31" y="36" text-anchor="middle">${value}</text>` +
+      '<text class="vector-aqi-badge-unit" x="31" y="46" text-anchor="middle">AQI</text>' +
+      '</svg>'
+    )
+  },
+
+  /* Home AQI readout — the live field's home value, rounded.
+   * Em-dash when the field hasn't arrived or the value is null. */
+  updateAqiBadge: function () {
+    if (!this.aqiBadge) {
+      return
+    }
+    const aqi = this.aqi && this.aqi.home ? this.aqi.home.aqi : null
+    if (aqi === null || aqi === undefined) {
+      this.aqiBadge.innerHTML = this.aqiBadgeSvg('–', null)
+      return
+    }
+    this.aqiBadge.innerHTML = this.aqiBadgeSvg(Math.round(aqi), this.aqiColor(aqi))
+  },
+
+  /* Pin the AQI callout above the home marker, tail tip hovering
+   * a short distance above the dot — same hover as the wind callout. */
+  positionAqiCallout: function () {
+    if (!this.map || !this.aqiCallout) {
+      return
+    }
+    const point = this.map.project(this.homeLngLat())
+    this.aqiCallout.style.left = `${point.x}px`
+    this.aqiCallout.style.top = `${point.y - 14}px`
+  },
+
+  /* AQI color through the EPA stops: green reads good, maroon
+   * reads hazardous. Null (missing model value) returns null so
+   * the renderer paints transparent. Pure — tested. */
+  aqiColor: function (aqi) {
+    if (aqi === null || aqi === undefined || Number.isNaN(aqi)) {
+      return null
+    }
+    const value = Math.min(Math.max(aqi, 0), 500)
+    let lower = AQI_COLOR_STOPS[0]
+    let upper = AQI_COLOR_STOPS[AQI_COLOR_STOPS.length - 1]
+    for (let i = 1; i < AQI_COLOR_STOPS.length; i += 1) {
+      if (value <= AQI_COLOR_STOPS[i][0]) {
+        lower = AQI_COLOR_STOPS[i - 1]
+        upper = AQI_COLOR_STOPS[i]
+        break
+      }
+    }
+    const span = upper[0] - lower[0] || 1
+    const mix = (value - lower[0]) / span
+    return [0, 1, 2].map((channel) => Math.round(lower[1][channel] + (upper[1][channel] - lower[1][channel]) * mix))
+  },
+
+  /* ImageSource coordinates for a field: half-cell padding around
+   * the outer grid centers, row 0 at the north edge. Pure — tested. */
+  aqiBounds: function (field) {
+    const west = field.lon0 - field.dLon / 2
+    const east = field.lon0 + (field.nx - 1) * field.dLon + field.dLon / 2
+    const north = field.lat0 + field.dLat / 2
+    const south = field.lat0 - (field.ny - 1) * field.dLat - field.dLat / 2
+    return [[west, north], [east, north], [east, south], [west, south]]
+  },
+
+  /* Render the field to a data URL: one pixel per grid node (row 0
+   * is already the north edge, so no flip), bilinear-upscaled with
+   * feathered borders so the wash dissolves instead of clipping.
+   * DOM glue — untested, like the particle GL layer. */
+  aqiImageUrl: function (field) {
+    const small = document.createElement('canvas')
+    small.width = field.nx
+    small.height = field.ny
+    const sctx = small.getContext('2d')
+    const img = sctx.createImageData(field.nx, field.ny)
+    for (let r = 0; r < field.ny; r += 1) {
+      for (let c = 0; c < field.nx; c += 1) {
+        const col = this.aqiColor(field.values[r * field.nx + c])
+        const o = (r * field.nx + c) * 4
+        if (col) {
+          img.data[o] = col[0]
+          img.data[o + 1] = col[1]
+          img.data[o + 2] = col[2]
+          img.data[o + 3] = 255
+        }
+      }
+    }
+    sctx.putImageData(img, 0, 0)
+    const big = document.createElement('canvas')
+    big.width = field.nx * 32
+    big.height = field.ny * 32
+    const bctx = big.getContext('2d')
+    bctx.imageSmoothingEnabled = true
+    bctx.imageSmoothingQuality = 'high'
+    bctx.drawImage(small, 0, 0, big.width, big.height)
+    bctx.globalCompositeOperation = 'destination-in'
+    const fade = 0.1
+    const across = bctx.createLinearGradient(0, 0, big.width, 0)
+    across.addColorStop(0, 'rgba(0,0,0,0)')
+    across.addColorStop(fade, 'rgba(0,0,0,1)')
+    across.addColorStop(1 - fade, 'rgba(0,0,0,1)')
+    across.addColorStop(1, 'rgba(0,0,0,0)')
+    bctx.fillStyle = across
+    bctx.fillRect(0, 0, big.width, big.height)
+    const down = bctx.createLinearGradient(0, 0, 0, big.height)
+    down.addColorStop(0, 'rgba(0,0,0,0)')
+    down.addColorStop(fade, 'rgba(0,0,0,1)')
+    down.addColorStop(1 - fade, 'rgba(0,0,0,1)')
+    down.addColorStop(1, 'rgba(0,0,0,0)')
+    bctx.fillStyle = down
+    bctx.fillRect(0, 0, big.width, big.height)
+    return big.toDataURL()
+  },
+
+  /* (Re)build the washes from the latest fields: continental
+   * context first (bottom), regional detail second (top, dropped
+   * below zoom 5 where its window can't fill the map). Existing
+   * sources get fresh images; missing ones are created. No-op
+   * without a ready map or field — safe to call from the socket
+   * handler. */
+  updateAqiImage: function () {
+    if (!this.map || !this.mapReady || !this.aqi || !this.aqi.field) {
+      return
+    }
+    const layers = [
+      { id: 'aqi-wash-wide', field: this.aqi.continental },
+      { id: 'aqi-wash', field: this.aqi.field, minzoom: 5 }
+    ]
+    layers.forEach(({ id, field, minzoom }) => {
+      if (!field) {
+        return
+      }
+      if (!this.map.getSource(id)) {
+        const layer = {
+          id,
+          type: 'raster',
+          source: id,
+          paint: {
+            'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
+            'raster-opacity-transition': { duration: 350, delay: 0 }
+          }
+        }
+        if (minzoom !== undefined) {
+          layer.minzoom = minzoom
+        }
+        this.map.addSource(id, {
+          type: 'image',
+          url: this.aqiImageUrl(field),
+          coordinates: this.aqiBounds(field)
+        })
+        this.map.addLayer(layer)
+        return
+      }
+      this.map.getSource(id).updateImage({
+        url: this.aqiImageUrl(field),
+        coordinates: this.aqiBounds(field)
+      })
+    })
+    if (this.map.getLayer('markers')) {
+      this.map.moveLayer('markers')
+    }
+  },
+
+  /* Show the wash layer (creating it from the latest field when
+   * needed). Guards the pre-load case for view switches that land
+   * before the first payload. */
+  ensureAqiLayer: function () {
+    this.updateAqiImage()
+    this.setAqiLayerVisible(this.isAqiView())
+  },
+
+  /* Wash visibility switch (after a fade-out completes, or before
+   * fading back in). Both layers move together. */
+  setAqiLayerVisible: function (visible) {
+    if (!this.map) {
+      return
+    }
+    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
+      if (this.map.getLayer(id)) {
+        this.map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
+      }
+    })
+  },
+
+  /* Fade both washes to an opacity (the paint transition glides
+   * them). Per-layer guards for pre-load calls. */
+  fadeAqiTo: function (opacity) {
+    if (!this.map) {
+      return
+    }
+    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
+      if (this.map.getLayer(id)) {
+        this.map.setPaintProperty(id, 'raster-opacity', opacity)
+      }
+    })
+  },
+
+  scheduleAqiHide: function () {
+    setTimeout(() => this.maybeHideAqi(), 450)
+  },
+
+  maybeHideAqi: function () {
+    if (!this.isAqiView()) {
+      this.setAqiLayerVisible(false)
+    }
+  },
+
+  /* Record a feed outcome for the status line. Pure-ish (clock
+   * read on ready) — tested. */
+  markFeed: function (view, outcome) {
+    this.feeds = this.feeds || { precip: {}, wind: {}, aqi: {} }
+    const feed = this.feeds[view] || (this.feeds[view] = {})
+    if (outcome === 'fetching') {
+      feed.fetching = true
+      feed.errorAt = null
+    } else if (outcome === 'ready') {
+      feed.fetching = false
+      feed.updatedAt = Date.now()
+      feed.errorAt = null
+    } else if (outcome === 'error') {
+      feed.fetching = false
+      feed.errorAt = Date.now()
+    }
+    this.updateStatus()
+  },
+
+  /* Status line text for a view from its feed snapshot: updating
+   * before the first payload, receipt time once data lands,
+   * unavailable on failure. Pure — tested. */
+  statusText: function (view, feed) {
+    const f = feed || {}
+    const label = { precip: 'Radar', wind: 'Wind', aqi: 'Air quality' }[view] || 'Map'
+    const lower = { precip: 'radar', wind: 'wind', aqi: 'air quality' }[view] || 'map'
+    if (!f.fetching && f.errorAt) {
+      return `${label} unavailable — retrying`
+    }
+    if (f.updatedAt) {
+      return `${label} updated ${this.formatFrameTime(Math.floor(f.updatedAt / 1000))}`
+    }
+    return `Updating ${lower}…`
+  },
+
+  /* Write the status cell. No-op before the attribution row exists. */
+  setStatus: function (text) {
+    if (this.statusEl) {
+      this.statusEl.textContent = text
+    }
+  },
+
+  /* Refresh the status line for the active view. */
+  updateStatus: function () {
+    if (!this.statusEl) {
+      return
+    }
+    this.setStatus(this.statusText(this.view, this.feeds && this.feeds[this.view]))
+  },
+
+  /* Caption row under the map: transient feed status on the
+   * left, CARTO/OSM attribution on the right. */
   attributionDiv: function () {
-    const attrib = document.createElement('div')
-    attrib.className = 'vector-attrib light'
-    attrib.innerHTML =
+    const row = document.createElement('div')
+    row.className = 'vector-attrib'
+    const status = document.createElement('span')
+    status.className = 'vector-status light'
+    row.appendChild(status)
+    this.statusEl = status
+    const links = document.createElement('span')
+    links.className = 'vector-attrib-links light'
+    links.innerHTML =
       '© <a href="https://carto.com/attribution" target="_blank">CARTO</a> ' +
       '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
-    return attrib
+    row.appendChild(links)
+    return row
   },
 
   positions: function () {
@@ -1103,6 +1566,12 @@ Module.register('MMM-WeatherMap', {
       this.restartWindAnimation({ resumeElapsed })
       return
     }
+    // The AQI view is static: no frame cadence, no progress glide —
+    // just the current wash. Timers stay cleared so nothing repaints.
+    if (this.isAqiView()) {
+      this.ensureAqiLayer()
+      return
+    }
     if (!this.frames || this.frames.frames.length < 2) {
       return
     }
@@ -1232,6 +1701,10 @@ Module.register('MMM-WeatherMap', {
 
   /* Display one frame: paint swap plus timeline label + progress. */
   showFrame: function (index, { paint = true, prev } = {}) {
+    // The static AQI view has no frames to display.
+    if (this.isAqiView()) {
+      return
+    }
     if (this.isWindView()) {
       this.showWindFrame(index)
       return
@@ -1295,6 +1768,10 @@ Module.register('MMM-WeatherMap', {
   },
 
   scrubTo: function (ratio) {
+    // The static AQI view has no frames to scrub.
+    if (this.isAqiView()) {
+      return
+    }
     if (this.isWindView()) {
       const slots = this.windSlots()
       if (slots.length === 0) {
@@ -1555,6 +2032,10 @@ Module.register('MMM-WeatherMap', {
     if (!this.timelineLabel) {
       return
     }
+    // The AQI view builds no timeline chrome — never touch it here.
+    if (this.isAqiView()) {
+      return
+    }
     if (this.isWindView()) {
       this.updateWindTimeline()
       return
@@ -1613,8 +2094,12 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Paint the progress fill for the current view and frame, gliding
-   * from the last frame swap. No-op before the track exists. */
+   * from the last frame swap. No-op before the track exists, and
+   * always a no-op in the static AQI view. */
   paintProgress: function () {
+    if (this.isAqiView()) {
+      return
+    }
     if (!this.timelineProgress) {
       return
     }

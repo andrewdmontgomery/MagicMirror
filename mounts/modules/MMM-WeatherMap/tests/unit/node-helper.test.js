@@ -61,6 +61,15 @@ describe('fetchFrames', () => {
       frames: [{ time: 111, path: '/v2/radar/a' }, { time: 222, path: '/v2/radar/b' }]
     })
   })
+
+  it('reports fetch failure for the status line', async () => {
+    global.fetch = async () => {
+      throw new Error('network down')
+    }
+    await helper.fetchFrames()
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'VECTOR_FRAMES_ERROR')
+  })
 })
 
 describe('fetchStyle', () => {
@@ -380,5 +389,258 @@ describe('fetchWindFields', () => {
   it('sends nothing without coordinates and never throws', async () => {
     await helper.fetchWindFields({})
     assert.equal(sent.length, 0)
+  })
+})
+
+describe('aqiGridParams', () => {
+  it('builds a 15x21 window around the request with row 0 north', () => {
+    const params = helper.aqiGridParams(40, -100)
+    assert.equal(params.nx, 21)
+    assert.equal(params.ny, 15)
+    assert.equal(params.lat0, 47)
+    assert.equal(params.lon0, -110)
+    assert.equal(params.dLat, 1)
+    assert.equal(params.dLon, 1)
+    assert.equal(params.lats.length, 15)
+    assert.equal(params.lons.length, 21)
+    assert.equal(params.lats[0], 47)
+    assert.equal(params.lats[14], 33)
+    assert.equal(params.lons[0], -110)
+    assert.equal(params.lons[20], -90)
+  })
+
+  it('builds the fixed continental window at 2-degree steps', () => {
+    const params = helper.aqiWideParams()
+    assert.equal(params.nx, 42)
+    assert.equal(params.ny, 24)
+    assert.equal(params.lat0, 60)
+    assert.equal(params.lon0, -134)
+    assert.equal(params.dLat, 2)
+    assert.equal(params.dLon, 2)
+    assert.equal(params.lats[0], 60)
+    assert.equal(params.lats[23], 14)
+    assert.equal(params.lons[0], -134)
+    assert.equal(params.lons[41], -52)
+  })
+
+  it('chunks grid pairs row-major within request size', () => {
+    const params = helper.aqiWideParams()
+    const chunks = helper.aqiChunks(params, 350)
+    assert.equal(chunks.length, 3)
+    assert.equal(chunks[0].length, 350)
+    assert.equal(chunks[2].length, 308)
+    // Order preserved: first pair is the northwest corner.
+    assert.deepEqual(chunks[0][0], [60, -134])
+    const flat = chunks.flat()
+    assert.equal(flat.length, 24 * 42)
+    assert.deepEqual(flat[flat.length - 1], [14, -52])
+  })
+})
+
+describe('mapAqiResponse', () => {
+  function indexedList (n) {
+    return Array.from({ length: n }, (_, i) => ({
+      latitude: 0,
+      longitude: 0,
+      current: { time: '2026-09-21T20:00', us_aqi: i }
+    }))
+  }
+
+  it('maps row-major values with row 0 at the north edge', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const { field } = helper.mapAqiResponse(indexedList(315), params, 40, -100)
+    assert.equal(field.nx, 21)
+    assert.equal(field.ny, 15)
+    assert.equal(field.values.length, 315)
+    assert.equal(field.values[0], 0)
+    assert.equal(field.values[20], 20)
+    assert.equal(field.values[21], 21)
+  })
+
+  it('samples home bilinearly at exact and fractional nodes', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const exact = helper.mapAqiResponse(indexedList(315), params, 40, -100)
+    assert.equal(exact.home.aqi, 7 * 21 + 10)
+    const frac = helper.mapAqiResponse(indexedList(315), params, 39.5, -99.5)
+    assert.equal(frac.home.aqi, (157 + 158 + 178 + 179) / 4)
+  })
+
+  it('falls back to nearest non-null when bilinear corners are null', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const list = indexedList(315).map((entry) => ({
+      ...entry,
+      current: { ...entry.current, us_aqi: null }
+    }))
+    list[100].current.us_aqi = 42
+    const { home } = helper.mapAqiResponse(list, params, 40, -100)
+    assert.equal(home.aqi, 42)
+  })
+
+  it('reports null home when the whole field is null', () => {
+    const params = helper.aqiGridParams(40, -100)
+    const list = indexedList(315).map((entry) => ({
+      ...entry,
+      current: { ...entry.current, us_aqi: null }
+    }))
+    const { field, home } = helper.mapAqiResponse(list, params, 40, -100)
+    assert.ok(field.values.every((v) => v === null))
+    assert.equal(home.aqi, null)
+  })
+})
+
+describe('fetchAqi', () => {
+  function aqiList (count, value = 31) {
+    return Array.from({ length: count }, () => ({
+      latitude: 40,
+      longitude: -100,
+      current: { time: '2026-09-21T20:00', us_aqi: value }
+    }))
+  }
+
+  function gridFetch () {
+    return async (url) => {
+      fetchedUrls.push(url)
+      // One location per grid node: size the fixture to the request.
+      const count = url.match(/latitude=([^&]*)/)[1].split(',').length
+      return { ok: true, json: async () => aqiList(count) }
+    }
+  }
+
+  it('requests the regional grid and maps the payload', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    try {
+      global.fetch = gridFetch()
+      await helper.fetchAqi({ lat: 40, lon: -100 })
+    } finally {
+      helper.waitMs = realWait
+    }
+    // Regional first (badge in seconds), full payload when wide lands.
+    assert.equal(fetchedUrls.length, 4)
+    for (const url of fetchedUrls) {
+      assert.match(url, /air-quality-api\.open-meteo\.com.*current=us_aqi/)
+      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
+      const longitudes = url.match(/longitude=([^&]*)/)[1].split(',')
+      assert.equal(latitudes.length, longitudes.length)
+      assert.ok(latitudes.length <= 350)
+    }
+    assert.equal(sent.length, 2)
+    assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
+    assert.equal(sent[0][1].field.values.length, 315)
+    assert.equal(sent[0][1].continental, undefined)
+    assert.equal(sent[0][1].home.aqi, 31)
+    assert.equal(sent[1][0], 'AQI_FIELDS_RESULT')
+    assert.equal(sent[1][1].field.values.length, 315)
+    assert.equal(sent[1][1].continental.values.length, 24 * 42)
+    assert.equal(sent[1][1].home.aqi, 31)
+    // Rate-limit gaps: one between regional and continental, then
+    // between the wide chunks — startup never bursts over budget.
+    assert.deepEqual(waits, [60000, 60000, 60000])
+  })
+
+  it('sends nothing without coordinates', async () => {
+    global.fetch = async () => {
+      throw new Error('fetch must not run without coordinates')
+    }
+    await helper.fetchAqi({})
+    assert.equal(sent.length, 0)
+  })
+
+  it('reports fetch failure so the frontend clears fetching', async () => {
+    global.fetch = async () => ({ ok: false, status: 500 })
+    await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_FIELDS_ERROR')
+  })
+})
+
+describe('fetchAqiWide', () => {
+  function wideFetch () {
+    return async (url) => {
+      fetchedUrls.push(url)
+      const count = url.match(/latitude=([^&]*)/)[1].split(',').length
+      return {
+        ok: true,
+        json: async () => Array.from({ length: count }, () => ({
+          latitude: 50,
+          longitude: -100,
+          current: { time: '2026-09-21T20:00', us_aqi: 40 }
+        }))
+      }
+    }
+  }
+
+  it('fetches the fixed continental window in chunks', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    try {
+      global.fetch = wideFetch()
+      await helper.fetchAqiWide()
+    } finally {
+      helper.waitMs = realWait
+    }
+    assert.equal(fetchedUrls.length, 3)
+    for (const url of fetchedUrls) {
+      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
+      assert.ok(latitudes.length <= 350)
+    }
+    assert.match(fetchedUrls[0], /latitude=60/)
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_WIDE_RESULT')
+    assert.equal(sent[0][1].continental.values.length, 24 * 42)
+    assert.deepEqual(waits, [60000, 60000])
+  })
+
+  it('reports wide failure without touching the regional field', async () => {
+    const realWait = helper.waitMs
+    helper.waitMs = async () => {}
+    try {
+      global.fetch = async () => ({ ok: false, status: 500 })
+      await helper.fetchAqiWide()
+    } finally {
+      helper.waitMs = realWait
+    }
+    assert.equal(sent.length, 1)
+    assert.equal(sent[0][0], 'AQI_WIDE_ERROR')
+  })
+})
+
+describe('fetchAqiChunk 429 handling', () => {
+  it('retries once after the Retry-After delay, then throws', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    let calls = 0
+    try {
+      global.fetch = async () => {
+        calls += 1
+        if (calls === 1) {
+          return { ok: false, status: 429, headers: { get: (name) => (name === 'retry-after' ? '2' : null) } }
+        }
+        return { ok: true, json: async () => [] }
+      }
+      const list = await helper.fetchAqiChunk([[40, -100]])
+      assert.deepEqual(waits, [2000])
+      assert.deepEqual(list, [])
+      assert.equal(calls, 2)
+    } finally {
+      helper.waitMs = realWait
+    }
+  })
+
+  it('throws after the retry also fails', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    try {
+      global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null } })
+      await assert.rejects(helper.fetchAqiChunk([[40, -100]]), /429/)
+      // Missing Retry-After must fall back to the 60 s gap, never 0.
+      assert.deepEqual(waits, [60000])
+    } finally {
+      helper.waitMs = realWait
+    }
   })
 })

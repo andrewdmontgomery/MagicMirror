@@ -26,8 +26,10 @@ function ctx (overrides = {}) {
   const sent = []
   const o = Object.create(def)
   Object.assign(o, {
-    config: { forecastHours: 12, precipProbabilityThreshold: 30, precipAmountThreshold: 0.3 },
+    config: { forecastHours: 12, precipProbabilityThreshold: 30, precipAmountThreshold: 0.3, aqiThreshold: 101 },
     precipExpected: null,
+    aqiNow: null,
+    lastSentView: undefined,
     sendNotification: (notification, payload) => {
       sent.push([notification, payload])
     },
@@ -116,5 +118,56 @@ describe('DOM_OBJECTS_CREATED', () => {
     const { c, sent } = ctx({ precipExpected: null })
     def.notificationReceived.call(c, 'DOM_OBJECTS_CREATED', {})
     assert.deepEqual(sent, [])
+  })
+})
+
+describe('AQI threshold', () => {
+  function aqi (value) {
+    return { aqi: value, time: '2026-09-21T20:00' }
+  }
+
+  it('selects aqi when home AQI reaches the threshold, beating rain', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(2, 80, 0)]
+    })
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(150))
+    assert.deepEqual(sent, [
+      ['WEATHERMAP_SET_VIEW', { view: 'precip' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'aqi' }]
+    ])
+  })
+
+  it('holds the threshold boundary at 101', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(100))
+    assert.deepEqual(sent, [])
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(101))
+    assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'aqi' }]])
+  })
+
+  it('falls back when AQI clears below the threshold', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(150))
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(40))
+    assert.deepEqual(sent, [
+      ['WEATHERMAP_SET_VIEW', { view: 'aqi' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'wind' }]
+    ])
+  })
+
+  it('re-asserts AQI on DOM_OBJECTS_CREATED', () => {
+    const { c, sent } = ctx({ aqiNow: 150 })
+    def.notificationReceived.call(c, 'DOM_OBJECTS_CREATED', {})
+    assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'aqi' }]])
+  })
+
+  it('ignores malformed AQI payloads', () => {
+    for (const payload of [{}, null, { aqi: 'high' }]) {
+      const { c, sent } = ctx()
+      def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', payload)
+      assert.deepEqual(sent, [])
+      assert.equal(c.aqiNow, null)
+    }
   })
 })

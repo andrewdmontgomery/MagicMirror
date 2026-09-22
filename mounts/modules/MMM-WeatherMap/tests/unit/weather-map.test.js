@@ -492,7 +492,7 @@ describe('setView', () => {
 
   it('rejects unknown views and no-op switches', () => {
     const { c, notified, redrawn } = viewCtx('precip')
-    assert.equal(def.setView.call(c, 'aqi'), false)
+    assert.equal(def.setView.call(c, 'smoke'), false)
     assert.equal(def.setView.call(c, 'precip'), false)
     assert.deepEqual(notified, [])
     assert.deepEqual(redrawn, [])
@@ -506,6 +506,28 @@ describe('setView', () => {
     assert.equal(c.view, 'wind')
     assert.deepEqual(notified, [['WEATHERMAP_VIEW_CHANGED', { view: 'wind' }]])
     assert.deepEqual(redrawn, [])
+  })
+
+  it('switches to the aqi view and broadcasts it', () => {
+    const { c, notified, redrawn } = viewCtx('wind')
+    assert.equal(def.setView.call(c, 'aqi'), true)
+    assert.equal(c.view, 'aqi')
+    assert.deepEqual(notified, [['WEATHERMAP_VIEW_CHANGED', { view: 'aqi' }]])
+    assert.deepEqual(redrawn, [])
+  })
+
+  it('leaves the static aqi view unscheduled', () => {
+    const ensured = []
+    const c = ctx({
+      view: 'aqi',
+      map: null,
+      playing: { precip: true, wind: true, aqi: true },
+      ensureAqiLayer: () => { ensured.push(true) }
+    })
+    def.restartAnimation.call(c)
+    assert.ok(!c.frameTimer)
+    assert.equal(c.progressRaf, null)
+    assert.deepEqual(ensured, [true])
   })
 
   it('routes WEATHERMAP_SET_VIEW notifications to setView', () => {
@@ -1624,5 +1646,498 @@ describe('updateTimeline', () => {
 
   it('does nothing before the timeline exists', () => {
     def.updateTimeline.call(ctx({ frames: framesFixture(5) }))
+  })
+})
+
+describe('aqiColor', () => {
+  it('maps EPA band boundaries to their colors', () => {
+    assert.deepEqual(def.aqiColor.call(ctx(), 0), [0, 228, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 50), [0, 228, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 100), [255, 255, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 150), [255, 126, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 200), [255, 0, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 300), [143, 63, 151])
+    assert.deepEqual(def.aqiColor.call(ctx(), 500), [126, 0, 35])
+  })
+
+  it('interpolates inside bands', () => {
+    assert.deepEqual(def.aqiColor.call(ctx(), 75), [128, 242, 0])
+  })
+
+  it('clamps out-of-range values', () => {
+    assert.deepEqual(def.aqiColor.call(ctx(), -5), [0, 228, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 900), [126, 0, 35])
+  })
+
+  it('returns null for missing values so they render transparent', () => {
+    for (const missing of [null, undefined, NaN]) {
+      assert.equal(def.aqiColor.call(ctx(), missing), null)
+    }
+  })
+})
+
+describe('aqiBounds', () => {
+  it('pads the grid centers by half a cell', () => {
+    const field = { nx: 21, ny: 15, lat0: 47, lon0: -110, dLat: 1, dLon: 1, values: [] }
+    assert.deepEqual(def.aqiBounds.call(ctx(), field), [
+      [-110.5, 47.5],
+      [-89.5, 47.5],
+      [-89.5, 32.5],
+      [-110.5, 32.5]
+    ])
+  })
+})
+
+describe('updateAqiImage', () => {
+  const FIELD = { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30, 30, 30, 30] }
+  const WIDE = { nx: 3, ny: 2, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [20, 20, 20, 20, 20, 20] }
+
+  function canvasDocument () {
+    const realDocument = global.document
+    const ctx2d = {
+      createImageData: (w, h) => ({ data: new Array(w * h * 4).fill(0) }),
+      putImageData () {},
+      drawImage () {},
+      createLinearGradient: () => ({ addColorStop () {} }),
+      fillRect () {},
+      fillStyle: null,
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: 'low'
+    }
+    global.document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ctx2d,
+        toDataURL: () => 'data:image/png,aqi'
+      })
+    }
+    return () => {
+      if (realDocument === undefined) {
+        delete global.document
+      } else {
+        global.document = realDocument
+      }
+    }
+  }
+
+  function aqiCtx (map) {
+    return ctx({
+      map,
+      mapReady: true,
+      view: 'aqi',
+      config: { aqiOpacity: 0.8 },
+      aqi: { field: FIELD, continental: WIDE, home: { aqi: 30 } }
+    })
+  }
+
+  it('pushes fresh images through the ImageSource API', () => {
+    const updated = []
+    const source = { updateImage: (opts) => updated.push(opts) }
+    const map = {
+      getSource: (id) => (id === 'aqi-wash' || id === 'aqi-wash-wide' ? source : undefined),
+      getLayer: () => undefined
+    }
+    const c = aqiCtx(map)
+    for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
+      c[fn] = (...args) => def[fn].call(c, ...args)
+    }
+    const restore = canvasDocument()
+    try {
+      def.updateAqiImage.call(c)
+    } finally {
+      restore()
+    }
+    assert.equal(updated.length, 2)
+    for (const opts of updated) {
+      assert.equal(opts.url, 'data:image/png,aqi')
+    }
+    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, WIDE))
+    assert.deepEqual(updated[1].coordinates, def.aqiBounds.call(c, FIELD))
+  })
+
+  it('creates both sources with detail on top on first call', () => {
+    const added = []
+    const map = {
+      getSource: () => undefined,
+      getLayer: (id) => (id === 'markers' ? {} : undefined),
+      addSource: (id) => { added.push(['source', id]) },
+      addLayer: (def) => { added.push(['layer', def.id]) },
+      moveLayer: (id) => { added.push(['move', id]) }
+    }
+    const c = aqiCtx(map)
+    for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
+      c[fn] = (...args) => def[fn].call(c, ...args)
+    }
+    const restore = canvasDocument()
+    try {
+      def.updateAqiImage.call(c)
+    } finally {
+      restore()
+    }
+    assert.deepEqual(added, [
+      ['source', 'aqi-wash-wide'],
+      ['layer', 'aqi-wash-wide'],
+      ['source', 'aqi-wash'],
+      ['layer', 'aqi-wash'],
+      ['move', 'markers']
+    ])
+  })
+
+  it('no-ops without a ready map or field', () => {
+    def.updateAqiImage.call(ctx({ map: null, mapReady: false, aqi: null }))
+    def.updateAqiImage.call(ctx({ map: {}, mapReady: false, aqi: { field: FIELD } }))
+  })
+
+  it('builds regional alone when continental has not landed', () => {
+    const added = []
+    const map = {
+      getSource: () => undefined,
+      getLayer: () => undefined,
+      addSource: (id) => { added.push(['source', id]) },
+      addLayer: (def) => { added.push(['layer', def.id]) },
+      moveLayer: (id) => { added.push(['move', id]) }
+    }
+    const restore = canvasDocument()
+    try {
+      const c = aqiCtx(map)
+      c.aqi = { field: FIELD, home: { aqi: 30 } }
+      for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
+        c[fn] = (...args) => def[fn].call(c, ...args)
+      }
+      def.updateAqiImage.call(c)
+    } finally {
+      restore()
+    }
+    assert.deepEqual(added, [['source', 'aqi-wash'], ['layer', 'aqi-wash']])
+  })
+})
+
+describe('aqi view opacity', () => {
+  function opacityCtx (view) {
+    const paint = []
+    const layout = []
+    const map = {
+      getSource: () => ({}),
+      getLayer: () => ({}),
+      setPaintProperty: (...args) => { paint.push(args) },
+      setLayoutProperty: (...args) => { layout.push(args) }
+    }
+    const c = ctx({ view, map, config: { aqiOpacity: 0.8 } })
+    for (const fn of ['updateViewButtons', 'restartAnimation', 'fadeRadarTo', 'scheduleRadarHide',
+      'fadeParticlesOut', 'updateAqiImage', 'updateAqiBadge', 'positionWindCallout',
+      'positionAqiCallout', 'scheduleAqiHide', 'setRadarLayersVisible']) {
+      c[fn] = () => {}
+    }
+    for (const fn of ['syncContentToView', 'isWindView', 'isAqiView', 'setAqiLayerVisible', 'fadeAqiTo']) {
+      c[fn] = (...args) => def[fn].call(c, ...args)
+    }
+    return { c, paint, layout }
+  }
+
+  it('fades both washes in on entering the aqi view', () => {
+    const { c, paint, layout } = opacityCtx('aqi')
+    def.syncContentToView.call(c)
+    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
+      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0.8))
+      assert.ok(layout.some(([l, prop, value]) => l === layer && prop === 'visibility' && value === 'visible'))
+    }
+  })
+
+  it('fades both washes out on leaving for the wind view', () => {
+    const { c, paint } = opacityCtx('wind')
+    def.syncContentToView.call(c)
+    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
+      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0))
+    }
+  })
+})
+
+describe('AQI socket handling', () => {
+  function aqiPayload (aqi = 93) {
+    return {
+      field: { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [aqi, aqi, aqi, aqi] },
+      home: { aqi, time: '2026-09-21T20:00' }
+    }
+  }
+
+  it('stores the field, refreshes the layer, and broadcasts the home value', () => {
+    const refreshed = []
+    const notified = []
+    const c = ctx({
+      aqi: null,
+      view: 'aqi',
+      sendNotification: (n, p) => notified.push([n, p]),
+      updateAqiImage: () => { refreshed.push(true) }
+    })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_RESULT', aqiPayload(93))
+    assert.deepEqual(c.aqi, aqiPayload(93))
+    assert.deepEqual(refreshed, [true])
+    assert.deepEqual(notified, [['WEATHERMAP_AQI_UPDATED', { aqi: 93, time: '2026-09-21T20:00' }]])
+  })
+
+  it('keeps the previous field on error without crashing', () => {
+    const notified = []
+    const previous = aqiPayload(31)
+    const c = ctx({
+      aqi: previous,
+      sendNotification: (n, p) => notified.push([n, p]),
+      updateAqiImage: () => { throw new Error('must not refresh on error') }
+    })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_ERROR', {})
+    assert.equal(c.aqi, previous)
+    assert.deepEqual(notified, [])
+  })
+
+  it('merges the wide field on demand delivery', () => {
+    const refreshed = []
+    const regional = aqiPayload(31)
+    const c = ctx({ aqi: regional, updateAqiImage: () => { refreshed.push(true) } })
+    def.socketNotificationReceived.call(c, 'AQI_WIDE_RESULT', {
+      continental: { nx: 1, ny: 1, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [40] }
+    })
+    assert.equal(c.aqi.field, regional.field)
+    assert.deepEqual(c.aqi.continental.values, [40])
+    assert.deepEqual(refreshed, [true])
+    assert.equal(c.wideFetching, false)
+  })
+
+  it('clears the in-flight flag on wide error', () => {
+    const c = ctx({ aqi: aqiPayload(31), wideFetching: true, updateAqiImage: () => {} })
+    def.socketNotificationReceived.call(c, 'AQI_WIDE_ERROR', {})
+    assert.equal(c.wideFetching, false)
+  })
+})
+
+describe('wideFetchNeeded', () => {
+  function need (zoom, aqi, wideFetching = false) {
+    return def.wideFetchNeeded.call({
+      map: { getZoom: () => zoom },
+      mapReady: true,
+      aqi,
+      wideFetching
+    })
+  }
+
+  it('fires below zoom 6 without a continental field', () => {
+    assert.equal(need(4, { field: {} }), true)
+    assert.equal(need(5.9, { field: {} }), true)
+  })
+
+  it('holds at zoom 6 and above', () => {
+    assert.equal(need(6, { field: {} }), false)
+    assert.equal(need(7, { field: {} }), false)
+  })
+
+  it('holds with continental cached, fetching, or map unready', () => {
+    assert.equal(need(4, { field: {}, continental: {} }), false)
+    assert.equal(need(4, { field: {} }, true), false)
+    assert.equal(def.wideFetchNeeded.call({ map: null, mapReady: false, aqi: null }), false)
+  })
+})
+
+describe('aqi legend', () => {
+  function withDocument (fn) {
+    const realDocument = global.document
+    global.document = { createElement: () => ({}) }
+    try {
+      return fn()
+    } finally {
+      if (realDocument === undefined) {
+        delete global.document
+      } else {
+        global.document = realDocument
+      }
+    }
+  }
+
+  it('titles the EPA scale with band ticks and a CAMS source line', () => {
+    const legend = withDocument(() => def.legendDiv.call({
+      view: 'aqi',
+      isWindView: def.isWindView,
+      isAqiView: def.isAqiView,
+      windLegendDiv: def.windLegendDiv,
+      aqiLegendDiv: def.aqiLegendDiv,
+      config: {}
+    }))
+    assert.match(legend.innerHTML, /AQI \(US\)/)
+    assert.match(legend.innerHTML, /300\+/)
+    assert.match(legend.innerHTML, /CAMS/)
+  })
+})
+
+describe('aqi badge', () => {
+  it('reads the home value with an EPA-colored ring', () => {
+    const badge = {}
+    def.updateAqiBadge.call({
+      aqiBadge: badge,
+      aqi: { home: { aqi: 93 } },
+      aqiBadgeSvg: def.aqiBadgeSvg,
+      aqiColor: def.aqiColor
+    })
+    assert.match(badge.innerHTML, />93</)
+    assert.match(badge.innerHTML, /AQI/)
+    assert.match(badge.innerHTML, /rgb\(219, 251, 0\)/)
+  })
+
+  it('falls back to an em-dash without a home value', () => {
+    const badge = {}
+    def.updateAqiBadge.call({
+      aqiBadge: badge,
+      aqi: { home: { aqi: null } },
+      aqiBadgeSvg: def.aqiBadgeSvg,
+      aqiColor: def.aqiColor
+    })
+    assert.match(badge.innerHTML, /–/)
+  })
+
+  it('pins the callout above the home marker', () => {
+    const callout = { style: {} }
+    def.positionAqiCallout.call({
+      map: { project: () => ({ x: 100, y: 120 }) },
+      aqiCallout: callout,
+      homeLngLat: () => [0, 0]
+    })
+    assert.equal(callout.style.left, '100px')
+    assert.equal(callout.style.top, '106px')
+  })
+})
+
+describe('aqi chrome', () => {
+  function aqiDom () {
+    const appended = []
+    const realDocument = global.document
+    global.document = {
+      createElement: () => ({
+        className: '',
+        style: {},
+        appendChild (child) { return child },
+        addEventListener () {},
+        setAttribute: () => {}
+      })
+    }
+    const mapDiv = {
+      querySelector: () => null,
+      appendChild (child) {
+        appended.push(child.className)
+        return child
+      }
+    }
+    return {
+      appended,
+      mapDiv,
+      restore () {
+        if (realDocument === undefined) {
+          delete global.document
+        } else {
+          global.document = realDocument
+        }
+      }
+    }
+  }
+
+  it('rebuilds legend plus callout with no timeline', () => {
+    const dom = aqiDom()
+    try {
+      const c = ctx({
+        config: { lat: 10, lon: 20, showLegend: true, showTimeline: true },
+        view: 'aqi',
+        map: { project: () => ({ x: 50, y: 60 }) },
+        mapDiv: dom.mapDiv,
+        aqiCallout: null,
+        aqiBadge: null,
+        aqi: { home: { aqi: 31 } }
+      })
+      for (const fn of ['legendDiv', 'aqiLegendDiv', 'buildAqiCallout', 'updateAqiBadge',
+        'aqiBadgeSvg', 'aqiColor', 'positionAqiCallout', 'homeLngLat', 'timelineDiv']) {
+        c[fn] = (...args) => def[fn].call(c, ...args)
+      }
+      def.rebuildOverlays.call(c)
+      const has = (cls) => dom.appended.some((appended) => appended.includes(cls))
+      assert.ok(has('vector-legend'))
+      assert.ok(has('vector-aqi-marker'))
+      assert.ok(!has('vector-timeline'))
+    } finally {
+      dom.restore()
+    }
+  })
+
+  it('leaves timeline, progress, and frames untouched', () => {
+    const painted = []
+    const c = ctx({
+      view: 'aqi',
+      frames: framesFixture(5),
+      frameIndex: 2,
+      timelineLabel: { set textContent (v) { painted.push(v) }, get textContent () { return undefined } },
+      timelineProgress: { set width (v) { painted.push(v) }, get width () { return undefined } }
+    })
+    def.updateTimeline.call(c)
+    def.paintProgress.call(c)
+    def.scrubTo.call(c, 0.9)
+    def.showFrame.call(c, 4, {})
+    assert.deepEqual(painted, [])
+    assert.equal(c.frameIndex, 2)
+  })
+})
+
+describe('statusText', () => {
+  function text (view, feed) {
+    return def.statusText.call(ctx(), view, feed)
+  }
+
+  it('reads updating before the first payload', () => {
+    assert.equal(text('aqi', {}), 'Updating air quality…')
+    assert.equal(text('aqi', { fetching: true }), 'Updating air quality…')
+    assert.equal(text('precip', {}), 'Updating radar…')
+    assert.equal(text('wind', {}), 'Updating wind…')
+  })
+
+  it('reads the receipt time once data lands', () => {
+    assert.match(text('aqi', { updatedAt: 1_800_000_000 }), /^Air quality updated \d{1,2}:\d{2} (AM|PM)$/)
+    assert.match(text('wind', { updatedAt: 1_800_000_000 }), /^Wind updated \d{1,2}:\d{2} (AM|PM)$/)
+  })
+
+  it('reads unavailable on failure and clears on the next request', () => {
+    const c = ctx({ feeds: { aqi: {} } })
+    def.markFeed.call(c, 'aqi', 'error')
+    assert.equal(def.statusText.call(c, 'aqi', c.feeds.aqi), 'Air quality unavailable — retrying')
+    def.markFeed.call(c, 'aqi', 'fetching')
+    assert.equal(def.statusText.call(c, 'aqi', c.feeds.aqi), 'Updating air quality…')
+    def.markFeed.call(c, 'aqi', 'ready')
+    assert.match(def.statusText.call(c, 'aqi', c.feeds.aqi), /^Air quality updated /)
+  })
+})
+
+describe('feed status wiring', () => {
+  function statusCtx (overrides = {}) {
+    const shown = []
+    const base = ctx({
+      view: 'aqi',
+      feeds: { precip: {}, wind: {}, aqi: {} },
+      statusEl: { set textContent (v) { shown.push(v) }, get textContent () { return undefined } },
+      sendSocketNotification: () => {},
+      ...overrides
+    })
+    for (const fn of ['markFeed', 'statusText', 'setStatus', 'updateStatus', 'formatFrameTime']) {
+      base[fn] = (...args) => def[fn].call(base, ...args)
+    }
+    return { c: base, shown }
+  }
+
+  it('stamps ready on field delivery and shows it', () => {
+    const { c, shown } = statusCtx({ aqi: null, updateAqiImage: () => {}, updateAqiBadge: () => {} })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_RESULT', {
+      field: { nx: 1, ny: 1, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30] },
+      home: { aqi: 30, time: '2026-09-21T20:00' }
+    })
+    assert.match(shown[shown.length - 1], /^Air quality updated /)
+  })
+
+  it('stamps errors and recovers on the next request', () => {
+    const { c, shown } = statusCtx({ aqi: null, updateAqiImage: () => {}, updateAqiBadge: () => {} })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_ERROR', {})
+    assert.equal(shown[shown.length - 1], 'Air quality unavailable — retrying')
+    def.getAqi.call({ ...c, config: { lat: 1, lon: 2 }, sendSocketNotification: c.sendSocketNotification, markFeed: c.markFeed, updateStatus: c.updateStatus })
+    assert.equal(shown[shown.length - 1], 'Updating air quality…')
   })
 })

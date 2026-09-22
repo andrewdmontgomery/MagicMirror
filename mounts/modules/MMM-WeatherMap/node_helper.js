@@ -16,6 +16,29 @@ const WIND_FIELD_STRIDE = 8
  * covers 1794). ~135 km/node — synoptic context, not detail. */
 const CONUS_STRIDE_ROW = 27
 const CONUS_STRIDE_COL = 46
+/* AQI grid window: ±7° lat / ±10° lon at 1° steps around the
+ * requested point (15x21 = 315 locations in one multi-location
+ * Open-Meteo request). CAMS native is ~0.4°, so 1° sampling plus
+ * frontend bilinear smoothing reproduces the model field. */
+const AQI_GRID_LAT_SPAN = 7
+const AQI_GRID_LON_SPAN = 10
+const AQI_GRID_STEP = 1
+/* Continental AQI window: fixed North-America bounds at 2° steps
+ * (24x42 = 1008 locations in three chunked requests). Coarse
+ * context under the regional detail — full Canada/US/Mexico
+ * coverage so zoomed-out views show the continent, not a box. */
+const AQI_WIDE_LAT_NORTH = 60
+const AQI_WIDE_LAT_SOUTH = 14
+const AQI_WIDE_LON_WEST = -134
+const AQI_WIDE_LON_EAST = -52
+const AQI_WIDE_STEP = 2
+/* Max locations per multi-location request: keeps URLs (~3 KB)
+ * far under server limits. */
+const AQI_CHUNK_PAIRS = 350
+/* Gap between AQI requests: multi-location metering appears to
+ * count locations against the 600/min free tier, so ~350 nodes
+ * per minute stays clear. Overridable in tests. */
+const AQI_REQUEST_GAP_MS = 60000
 
 module.exports = NodeHelper.create({
   socketNotificationReceived: function (notification, payload) {
@@ -30,6 +53,12 @@ module.exports = NodeHelper.create({
     }
     if (notification === 'GET_WIND_FIELDS') {
       this.fetchWindFields(payload || {})
+    }
+    if (notification === 'GET_AQI_FIELDS') {
+      this.fetchAqi(payload || {})
+    }
+    if (notification === 'GET_AQI_WIDE') {
+      this.fetchAqiWide()
     }
   },
 
@@ -248,6 +277,251 @@ module.exports = NodeHelper.create({
     }
   },
 
+  /* AQI request grid: row-major lat/lon pairs over the window
+   * around (lat, lon), row 0 at the north edge to match the
+   * resampled wind grids. Pure — unit-tested. */
+  aqiGridParams: function (lat, lon) {
+    const ny = Math.round((2 * AQI_GRID_LAT_SPAN) / AQI_GRID_STEP) + 1
+    const nx = Math.round((2 * AQI_GRID_LON_SPAN) / AQI_GRID_STEP) + 1
+    const lat0 = lat + AQI_GRID_LAT_SPAN
+    const lon0 = lon - AQI_GRID_LON_SPAN
+    const lats = []
+    const lons = []
+    for (let r = 0; r < ny; r += 1) {
+      lats.push(lat0 - r * AQI_GRID_STEP)
+    }
+    for (let c = 0; c < nx; c += 1) {
+      lons.push(lon0 + c * AQI_GRID_STEP)
+    }
+    return { nx, ny, lat0, lon0, dLat: AQI_GRID_STEP, dLon: AQI_GRID_STEP, lats, lons }
+  },
+
+  /* Continental AQI grid: fixed bounds, row 0 at the north edge.
+   * Pure — unit-tested. */
+  aqiWideParams: function () {
+    const lats = []
+    const lons = []
+    for (let lat = AQI_WIDE_LAT_NORTH; lat >= AQI_WIDE_LAT_SOUTH; lat -= AQI_WIDE_STEP) {
+      lats.push(lat)
+    }
+    for (let lon = AQI_WIDE_LON_WEST; lon <= AQI_WIDE_LON_EAST; lon += AQI_WIDE_STEP) {
+      lons.push(lon)
+    }
+    return {
+      nx: lons.length,
+      ny: lats.length,
+      lat0: lats[0],
+      lon0: lons[0],
+      dLat: AQI_WIDE_STEP,
+      dLon: AQI_WIDE_STEP,
+      lats,
+      lons
+    }
+  },
+
+  /* Map a multi-location Open-Meteo AQI response onto the grid
+   * frame plus a bilinear home value. Null-tolerant: bilinear
+   * when all four corners exist, else nearest non-null, else
+   * null. Pure — unit-tested. */
+  mapAqiResponse: function (list, params, lat, lon) {
+    const values = list.map((entry) =>
+      entry && entry.current && typeof entry.current.us_aqi === 'number'
+        ? entry.current.us_aqi
+        : null
+    )
+    const field = {
+      nx: params.nx,
+      ny: params.ny,
+      lat0: params.lat0,
+      lon0: params.lon0,
+      dLat: params.dLat,
+      dLon: params.dLon,
+      values
+    }
+    const r = (params.lat0 - lat) / params.dLat
+    const c = (lon - params.lon0) / params.dLon
+    const r0 = Math.floor(r)
+    const c0 = Math.floor(c)
+    const fr = r - r0
+    const fc = c - c0
+    const at = (rr, cc) => {
+      if (rr < 0 || rr >= params.ny || cc < 0 || cc >= params.nx) {
+        return null
+      }
+      return values[rr * params.nx + cc]
+    }
+    const corners = [at(r0, c0), at(r0, c0 + 1), at(r0 + 1, c0), at(r0 + 1, c0 + 1)]
+    let aqi = null
+    if (corners.every((v) => v !== null)) {
+      aqi =
+        corners[0] * (1 - fr) * (1 - fc) +
+        corners[1] * (1 - fr) * fc +
+        corners[2] * fr * (1 - fc) +
+        corners[3] * fr * fc
+    } else {
+      let best = null
+      let bestDist = Infinity
+      values.forEach((v, i) => {
+        if (v === null) {
+          return
+        }
+        const dr = Math.floor(i / params.nx) - r
+        const dc = (i % params.nx) - c
+        const dist = dr * dr + dc * dc
+        if (dist < bestDist) {
+          bestDist = dist
+          best = v
+        }
+      })
+      aqi = best
+    }
+    const time = list.length > 0 && list[0] && list[0].current ? list[0].current.time : null
+    return { field, home: { aqi, time } }
+  },
+
+  /* AQI fields: current US-AQI on the regional grid around the
+   * requested point plus the continental context grid (one
+   * multi-location CAMS request each, keyless). Sends the regional
+   * payload first (badge in seconds), then the full payload when
+   * the wide grid lands — both are prefetched up front so
+   * zooming out never waits on the network. AQI_FIELDS_ERROR
+   * only when regional fails; a wide failure keeps regional
+   * standing (the frontend demand hook refetches it later). */
+  fetchAqi: async function ({ lat, lon } = {}) {
+    if (lat === undefined || lon === undefined) {
+      return
+    }
+    const regional = this.aqiGridParams(lat, lon)
+    const continental = this.aqiWideParams()
+    let mapped
+    try {
+      const regionalList = await this.fetchAqiGrid(regional)
+      mapped = this.mapAqiResponse(regionalList, regional, lat, lon)
+      this.sendSocketNotification('AQI_FIELDS_RESULT', { field: mapped.field, home: mapped.home })
+    } catch (error) {
+      console.error('MMM-WeatherMap: failed to fetch AQI fields', error.message || error)
+      this.sendSocketNotification('AQI_FIELDS_ERROR', {})
+      return
+    }
+    // Pace the continental prefetch behind the regional send: the two
+    // grids back-to-back burst ~665 locations in seconds, over the
+    // ~600/min free-tier budget, so the wide chunks 429. Regional is
+    // already delivered (badge in seconds); the wide context follows
+    // a gap later.
+    await this.waitMs(AQI_REQUEST_GAP_MS)
+    try {
+      const continentalList = await this.fetchAqiGrid(continental)
+      const wide = this.mapAqiResponse(continentalList, continental, lat, lon)
+      const home = mapped.home.aqi === null ? wide.home : mapped.home
+      console.log(
+        `MMM-WeatherMap: AQI fields ${mapped.field.values.length}+${wide.field.values.length} nodes, ` +
+        `home ${home.aqi === null ? 'n/a' : home.aqi.toFixed(0)} US-AQI`
+      )
+      this.sendSocketNotification('AQI_FIELDS_RESULT', {
+        field: mapped.field,
+        continental: wide.field,
+        home
+      })
+    } catch (error) {
+      console.error('MMM-WeatherMap: wide AQI grid failed, keeping regional', error.message || error)
+    }
+  },
+
+  /* Continental AQI grid on demand (zoomed-out views): the fixed
+   * North-America window in rate-limited chunks. Emits
+   * AQI_WIDE_RESULT; a failure keeps the regional field standing
+   * and only logs. */
+  fetchAqiWide: async function () {
+    try {
+      const continental = this.aqiWideParams()
+      const continentalList = await this.fetchAqiGrid(continental)
+      // Home coordinates are dummy here: only the field ships in
+      // WIDE_RESULT (the badge reads the regional home value).
+      const wide = this.mapAqiResponse(continentalList, continental, 0, 0)
+      console.log(`MMM-WeatherMap: wide AQI field ${wide.field.values.length} nodes`)
+      this.sendSocketNotification('AQI_WIDE_RESULT', { continental: wide.field })
+    } catch (error) {
+      console.error('MMM-WeatherMap: wide AQI grid failed, keeping regional', error.message || error)
+      this.sendSocketNotification('AQI_WIDE_ERROR', {})
+    }
+  },
+
+  /* Delay helper (overridden with a recorder in tests). */
+  waitMs: function (ms) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms)
+    })
+  },
+
+  /* Split grid pairs into request-sized chunks. Row-major order
+   * is preserved so mapAqiResponse indexing holds after the
+   * chunk responses are concatenated. Pure — unit-tested. */
+  aqiChunks: function (params, maxPairs = AQI_CHUNK_PAIRS) {
+    const pairs = []
+    for (const la of params.lats) {
+      for (const lo of params.lons) {
+        pairs.push([la, lo])
+      }
+    }
+    const chunks = []
+    for (let i = 0; i < pairs.length; i += maxPairs) {
+      chunks.push(pairs.slice(i, i + maxPairs))
+    }
+    return chunks
+  },
+
+  /* One grid's multi-location requests: a lat/lon pair per node,
+   * chunked to stay under URL limits with rate-limit gaps between
+   * chunks (the first fires immediately). Throws on HTTP errors
+   * so the caller reports AQI_FIELDS_ERROR. */
+  fetchAqiGrid: async function (params) {
+    const chunks = this.aqiChunks(params)
+    const lists = []
+    for (const [index, chunk] of chunks.entries()) {
+      if (index > 0) {
+        await this.waitMs(AQI_REQUEST_GAP_MS)
+      }
+      lists.push(await this.fetchAqiChunk(chunk))
+    }
+    return lists.flat()
+  },
+
+  /* A single chunk request. On HTTP 429, backs off once for the
+   * server's Retry-After (default 60 s) and retries; anything
+   * still failing throws so the caller reports an error. */
+  fetchAqiChunk: async function (pairs) {
+    const plat = pairs.map(([la]) => la)
+    const plon = pairs.map(([, lo]) => lo)
+    const url =
+      `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${plat.join(',')}&longitude=${plon.join(',')}` +
+      '&current=us_aqi'
+    const attempts = [false, true]
+    for (const retried of attempts) {
+      const response = await fetch(url)
+      if (response.ok) {
+        const json = await response.json()
+        return Array.isArray(json) ? json : [json]
+      }
+      const rawRetryAfter =
+        response.headers && typeof response.headers.get === 'function'
+          ? response.headers.get('retry-after')
+          : null
+      // Missing/empty header must not parse as 0 (Number(null) === 0
+      // would retry immediately and burn the second attempt).
+      const retryAfter = rawRetryAfter === null || rawRetryAfter === undefined || rawRetryAfter === ''
+        ? NaN
+        : Number(rawRetryAfter)
+      if (response.status === 429 && !retried) {
+        const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : AQI_REQUEST_GAP_MS
+        console.warn(`MMM-WeatherMap: AQI rate-limited, retrying in ${Math.round(delayMs / 1000)}s`)
+        await this.waitMs(delayMs)
+        continue
+      }
+      throw new Error(`HTTP ${response.status}`)
+    }
+    throw new Error('MMM-WeatherMap: AQI chunk retry exhausted')
+  },
+
   /* Valid time of one hour spec as ISO. Pure — unit-tested. */
   validTime: function (spec) {
     const runEpoch = Date.UTC(
@@ -413,6 +687,7 @@ module.exports = NodeHelper.create({
       })
     } catch (error) {
       console.error('MMM-WeatherMap: failed to fetch radar frames', error)
+      this.sendSocketNotification('VECTOR_FRAMES_ERROR', {})
     }
   }
 })

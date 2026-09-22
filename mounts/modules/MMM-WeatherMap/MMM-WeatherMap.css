@@ -59,6 +59,21 @@
 	background: linear-gradient(to top, rgb(81, 177, 222) 0%, #7fd4f2 55%, #e8f6fd 100%);
 }
 
+/* AQI legend: US EPA band colors at proportional stops
+ * (0/50/100/150/200/300/500), mirroring AQI_COLOR_STOPS in
+ * MMM-WeatherMap.js — keep the two in sync. */
+.vector-legend-bar-aqi {
+	background: linear-gradient(to top, #00e400 0%, #00e400 10%, #ffff00 20%, #ff7e00 30%, #ff0000 40%, #8f3f97 60%, #7e0023 100%);
+}
+
+.vector-legend-source {
+	font-size: 10px;
+	line-height: 1.2;
+	margin-top: 6px;
+	white-space: nowrap;
+	opacity: 0.7;
+}
+
 /* Wind location callout: a small circle (compass point over speed +
  * unit, e.g. ESE / 11 MPH readout) pinned to the home marker
  * with a tail pointer. Positioned by MapLibre, so no absolute
@@ -67,7 +82,8 @@
  * legend/timeline pills (z-index 5): streaks never cross the callout.
  * Bottom-center anchored at the projected home point (see
  * positionWindCallout) via the translate. */
-.vector-wind-marker {
+.vector-wind-marker,
+.vector-aqi-marker {
 	position: absolute;
 	left: 0;
 	top: 0;
@@ -99,6 +115,28 @@
 }
 
 .vector-wind-badge-unit {
+	font-size: 8px;
+	font-weight: 700;
+	letter-spacing: 0.5px;
+	fill: #868d93;
+}
+
+/* AQI badge readout: same mirror font, value large over the unit. */
+.vector-aqi-badge svg {
+	display: block;
+}
+
+.vector-aqi-badge text {
+	font-family: inherit;
+}
+
+.vector-aqi-badge-value {
+	font-size: 19px;
+	font-weight: 800;
+	fill: #fff;
+}
+
+.vector-aqi-badge-unit {
 	font-size: 8px;
 	font-weight: 700;
 	letter-spacing: 0.5px;
@@ -259,12 +297,27 @@
 	color: #5ac8fa;
 }
 
-/* Attribution caption: dim and small under the map. */
+/* Attribution caption: dim and small under the map, feed status
+ * on the left and CARTO/OSM links on the right. */
 .vector-attrib {
-	text-align: right;
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
 	font-size: 11px;
 	color: #777;
 	margin-top: 4px;
+}
+
+.vector-status {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.vector-attrib-links {
+	text-align: right;
+	white-space: nowrap;
 }
 
 .vector-attrib a {
