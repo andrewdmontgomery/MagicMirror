@@ -1688,9 +1688,183 @@ describe('aqiBounds', () => {
   })
 })
 
+describe('aqiBoundsLatLng', () => {
+  it('converts field geometry to a MapLibre [[sw], [ne]] bound', () => {
+    const field = { nx: 21, ny: 15, lat0: 47, lon0: -110, dLat: 1, dLon: 1, values: [] }
+    assert.deepEqual(def.aqiBoundsLatLng.call(ctx(), field), [
+      [-110.5, 32.5],
+      [-89.5, 47.5]
+    ])
+  })
+
+  it('matches the aqiBounds image corners', () => {
+    const field = { nx: 21, ny: 15, lat0: 47, lon0: -110, dLat: 1, dLon: 1, values: [] }
+    const c = ctx()
+    const corners = def.aqiBounds.call(c, field)
+    assert.deepEqual(def.aqiBoundsLatLng.call(c, field), [
+      [corners[0][0], corners[2][1]],
+      [corners[1][0], corners[0][1]]
+    ])
+  })
+})
+
+describe('defaultAqiBounds', () => {
+  it('centers the home rect on the configured point', () => {
+    assert.deepEqual(def.defaultAqiBounds.call(ctx(), 40, -100), [
+      [-110, 33],
+      [-90, 47]
+    ])
+  })
+})
+
+describe('aqiConstraintFor', () => {
+  const BOUNDS = [[-110, 33], [-90, 47]]
+
+  it('no-ops inside the window at zoom 5+', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 6, center: [-93, 41], bounds: BOUNDS }),
+      { type: 'none' }
+    )
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 5, center: [-110, 33], bounds: BOUNDS }),
+      { type: 'none' }
+    )
+  })
+
+  it('raises low zoom to 5 keeping the center', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 4, center: [-93, 41], bounds: BOUNDS }),
+      { type: 'correct', zoom: 5, center: [-93, 41] }
+    )
+  })
+
+  it('clamps an escaped center into the window', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 6, center: [-80, 60], bounds: BOUNDS }),
+      { type: 'correct', zoom: 6, center: [-90, 47] }
+    )
+  })
+
+  it('sends an escaped camera to the selected location, not the nearest edge', () => {
+    // A clamp lands on an arbitrary edge — neither where the user was
+    // nor anywhere meaningful. Going home reads as a reset, not a bug.
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 6,
+        center: [-80, 60],
+        bounds: BOUNDS,
+        home: [-93, 41]
+      }),
+      { type: 'correct', zoom: 6, center: [-93, 41] }
+    )
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 4,
+        center: [-80, 60],
+        bounds: BOUNDS,
+        home: [-93, 41]
+      }),
+      { type: 'correct', zoom: 5, center: [-93, 41] }
+    )
+  })
+
+  it('keeps an inside center where it is even when home is given', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 4,
+        center: [-95, 40],
+        bounds: BOUNDS,
+        home: [-93, 41]
+      }),
+      { type: 'correct', zoom: 5, center: [-95, 40] }
+    )
+  })
+
+  it('glides home when the viewport straddles the edge', () => {
+    // Center 0.2° inside the west edge, but the viewport hangs over
+    // it: re-applying the clamp would shove the camera to a
+    // viewport-fitting center — the same arbitrary jump as a clamp.
+    const edge = [[-103, 37], [-83, 47]]
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 7,
+        center: [-102.79, 41],
+        bounds: edge,
+        home: [-93, 41],
+        viewport: { halfLon: 2.3, halfLat: 1.6 }
+      }),
+      { type: 'correct', zoom: 7, center: [-93, 41] }
+    )
+  })
+
+  it('holds when the viewport fits inside the window', () => {
+    const edge = [[-103, 37], [-83, 47]]
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), {
+        view: 'aqi',
+        zoom: 7,
+        center: [-93, 41],
+        bounds: edge,
+        home: [-93, 41],
+        viewport: { halfLon: 2.3, halfLat: 1.6 }
+      }),
+      { type: 'none' }
+    )
+  })
+
+  it('clears outside the aqi view regardless of camera', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'wind', zoom: 4, center: [0, 0], bounds: BOUNDS }),
+      { type: 'clear' }
+    )
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'precip', zoom: 6, center: [-93, 41], bounds: BOUNDS }),
+      { type: 'clear' }
+    )
+  })
+
+  it('no-ops without bounds to correct against', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 4, center: [-93, 41], bounds: null }),
+      { type: 'none' }
+    )
+  })
+
+  it('stops animation and clears constraints without camera calls on exit', () => {
+    const calls = []
+    const noCamera = (name) => () => { throw new Error(`camera must not move on exit (${name})`) }
+    const map = {
+      stop: () => calls.push('stop'),
+      setMaxBounds: (bounds) => calls.push(['setMaxBounds', bounds]),
+      setMinZoom: (zoom) => calls.push(['setMinZoom', zoom]),
+      easeTo: noCamera('easeTo'),
+      jumpTo: noCamera('jumpTo'),
+      flyTo: noCamera('flyTo'),
+      setCenter: noCamera('setCenter'),
+      setZoom: noCamera('setZoom')
+    }
+    def.clearViewConstraints.call(ctx({ map, view: 'wind' }))
+    assert.deepEqual(calls, ['stop', ['setMaxBounds', null], ['setMinZoom', null]])
+  })
+
+  it('clears from any camera without correction on exit', () => {
+    // Leaving AQI never moves the camera: even a wildly escaped
+    // camera yields 'clear' (constraints off, no ease), not 'correct'.
+    for (const view of ['precip', 'wind']) {
+      assert.deepEqual(
+        def.aqiConstraintFor.call(ctx(), { view, zoom: 2, center: [500, -500], bounds: BOUNDS }),
+        { type: 'clear' }
+      )
+    }
+  })
+})
+
 describe('updateAqiImage', () => {
   const FIELD = { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30, 30, 30, 30] }
-  const WIDE = { nx: 3, ny: 2, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [20, 20, 20, 20, 20, 20] }
 
   function canvasDocument () {
     const realDocument = global.document
@@ -1727,15 +1901,15 @@ describe('updateAqiImage', () => {
       mapReady: true,
       view: 'aqi',
       config: { aqiOpacity: 0.8 },
-      aqi: { field: FIELD, continental: WIDE, home: { aqi: 30 } }
+      aqi: { field: FIELD, home: { aqi: 30 } }
     })
   }
 
-  it('pushes fresh images through the ImageSource API', () => {
+  it('pushes a fresh image through the ImageSource API', () => {
     const updated = []
     const source = { updateImage: (opts) => updated.push(opts) }
     const map = {
-      getSource: (id) => (id === 'aqi-wash' || id === 'aqi-wash-wide' ? source : undefined),
+      getSource: (id) => (id === 'aqi-wash' ? source : undefined),
       getLayer: () => undefined
     }
     const c = aqiCtx(map)
@@ -1748,15 +1922,12 @@ describe('updateAqiImage', () => {
     } finally {
       restore()
     }
-    assert.equal(updated.length, 2)
-    for (const opts of updated) {
-      assert.equal(opts.url, 'data:image/png,aqi')
-    }
-    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, WIDE))
-    assert.deepEqual(updated[1].coordinates, def.aqiBounds.call(c, FIELD))
+    assert.equal(updated.length, 1)
+    assert.equal(updated[0].url, 'data:image/png,aqi')
+    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, FIELD))
   })
 
-  it('creates both sources with detail on top on first call', () => {
+  it('creates the source on first call', () => {
     const added = []
     const map = {
       getSource: () => undefined,
@@ -1776,8 +1947,6 @@ describe('updateAqiImage', () => {
       restore()
     }
     assert.deepEqual(added, [
-      ['source', 'aqi-wash-wide'],
-      ['layer', 'aqi-wash-wide'],
       ['source', 'aqi-wash'],
       ['layer', 'aqi-wash'],
       ['move', 'markers']
@@ -1787,29 +1956,6 @@ describe('updateAqiImage', () => {
   it('no-ops without a ready map or field', () => {
     def.updateAqiImage.call(ctx({ map: null, mapReady: false, aqi: null }))
     def.updateAqiImage.call(ctx({ map: {}, mapReady: false, aqi: { field: FIELD } }))
-  })
-
-  it('builds regional alone when continental has not landed', () => {
-    const added = []
-    const map = {
-      getSource: () => undefined,
-      getLayer: () => undefined,
-      addSource: (id) => { added.push(['source', id]) },
-      addLayer: (def) => { added.push(['layer', def.id]) },
-      moveLayer: (id) => { added.push(['move', id]) }
-    }
-    const restore = canvasDocument()
-    try {
-      const c = aqiCtx(map)
-      c.aqi = { field: FIELD, home: { aqi: 30 } }
-      for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
-        c[fn] = (...args) => def[fn].call(c, ...args)
-      }
-      def.updateAqiImage.call(c)
-    } finally {
-      restore()
-    }
-    assert.deepEqual(added, [['source', 'aqi-wash'], ['layer', 'aqi-wash']])
   })
 })
 
@@ -1835,21 +1981,17 @@ describe('aqi view opacity', () => {
     return { c, paint, layout }
   }
 
-  it('fades both washes in on entering the aqi view', () => {
+  it('fades the wash in on entering the aqi view', () => {
     const { c, paint, layout } = opacityCtx('aqi')
     def.syncContentToView.call(c)
-    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
-      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0.8))
-      assert.ok(layout.some(([l, prop, value]) => l === layer && prop === 'visibility' && value === 'visible'))
-    }
+    assert.ok(paint.some(([l, prop, value]) => l === 'aqi-wash' && prop === 'raster-opacity' && value === 0.8))
+    assert.ok(layout.some(([l, prop, value]) => l === 'aqi-wash' && prop === 'visibility' && value === 'visible'))
   })
 
-  it('fades both washes out on leaving for the wind view', () => {
+  it('fades the wash out on leaving for the wind view', () => {
     const { c, paint } = opacityCtx('wind')
     def.syncContentToView.call(c)
-    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
-      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0))
-    }
+    assert.ok(paint.some(([l, prop, value]) => l === 'aqi-wash' && prop === 'raster-opacity' && value === 0))
   })
 })
 
@@ -1887,52 +2029,6 @@ describe('AQI socket handling', () => {
     def.socketNotificationReceived.call(c, 'AQI_FIELDS_ERROR', {})
     assert.equal(c.aqi, previous)
     assert.deepEqual(notified, [])
-  })
-
-  it('merges the wide field on demand delivery', () => {
-    const refreshed = []
-    const regional = aqiPayload(31)
-    const c = ctx({ aqi: regional, updateAqiImage: () => { refreshed.push(true) } })
-    def.socketNotificationReceived.call(c, 'AQI_WIDE_RESULT', {
-      continental: { nx: 1, ny: 1, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [40] }
-    })
-    assert.equal(c.aqi.field, regional.field)
-    assert.deepEqual(c.aqi.continental.values, [40])
-    assert.deepEqual(refreshed, [true])
-    assert.equal(c.wideFetching, false)
-  })
-
-  it('clears the in-flight flag on wide error', () => {
-    const c = ctx({ aqi: aqiPayload(31), wideFetching: true, updateAqiImage: () => {} })
-    def.socketNotificationReceived.call(c, 'AQI_WIDE_ERROR', {})
-    assert.equal(c.wideFetching, false)
-  })
-})
-
-describe('wideFetchNeeded', () => {
-  function need (zoom, aqi, wideFetching = false) {
-    return def.wideFetchNeeded.call({
-      map: { getZoom: () => zoom },
-      mapReady: true,
-      aqi,
-      wideFetching
-    })
-  }
-
-  it('fires below zoom 6 without a continental field', () => {
-    assert.equal(need(4, { field: {} }), true)
-    assert.equal(need(5.9, { field: {} }), true)
-  })
-
-  it('holds at zoom 6 and above', () => {
-    assert.equal(need(6, { field: {} }), false)
-    assert.equal(need(7, { field: {} }), false)
-  })
-
-  it('holds with continental cached, fetching, or map unready', () => {
-    assert.equal(need(4, { field: {}, continental: {} }), false)
-    assert.equal(need(4, { field: {} }, true), false)
-    assert.equal(def.wideFetchNeeded.call({ map: null, mapReady: false, aqi: null }), false)
   })
 })
 

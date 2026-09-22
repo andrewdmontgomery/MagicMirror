@@ -5,7 +5,9 @@
  * extension point for future views: add the key here, a legend branch in
  * legendDiv(), a timeline branch in timelineDiv(), and a layer branch in
  * initMap()/restartAnimation(). The AQI view is static (no timeline) —
- * rebuildOverlays() skips its timeline chrome.
+ * rebuildOverlays() skips its timeline chrome. Entering the AQI view
+ * clamps the shared map to the regional window (minZoom 5 + maxBounds
+ * from the field geometry); leaving releases both, camera untouched.
  * View selection is manual for now (viewControl + WEATHERMAP_SET_VIEW);
  * a future auto-selector can drive the same setView() — e.g. default to
  * whichever of rain/AQI/wind is most relevant.
@@ -41,6 +43,16 @@ const WIND_COLOR_STOPS = [
   [0.55, [127, 212, 242]],
   [1, [232, 246, 253]]
 ]
+/* Minimum zoom inside the AQI view: the regional wash only covers
+ * its window at zoom 5 and up (the wash layer itself hides below 5),
+ * so the view clamp and the layer floor stay one constant. */
+const AQI_MIN_ZOOM = 5
+/* Pre-payload AQI rect spans (mirror the node_helper AQI_GRID_LAT /
+ * AQI_GRID_LON_SPAN): geometry is fixed for fixed config, so the
+ * default rect matches the field the first payload will describe —
+ * the exact bounds snap in with the payload, no refetch needed. */
+const AQI_DEFAULT_LAT_SPAN = 7
+const AQI_DEFAULT_LON_SPAN = 10
 /* US EPA AQI stops (AQI → RGB), mirroring .vector-legend-bar-aqi in
  * MMM-WeatherMap.css — keep the two in sync. */
 const AQI_COLOR_STOPS = [
@@ -127,7 +139,6 @@ Module.register('MMM-WeatherMap', {
     this.framesKey = null
     this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : 'wind'
     this.aqi = null
-    this.wideFetching = false
     this.feeds = { precip: {}, wind: {}, aqi: {} }
     this.statusEl = null
     this.wind = null
@@ -163,11 +174,6 @@ Module.register('MMM-WeatherMap', {
     }, this.config.windFieldUpdateInterval)
     setInterval(() => {
       this.getAqi()
-      // Continental refresh only once demand-fetched: an unused
-      // wide grid is three requests spent for nothing.
-      if (this.aqi && this.aqi.continental) {
-        this.getAqiWide()
-      }
     }, this.config.aqiUpdateInterval)
   },
 
@@ -210,34 +216,6 @@ Module.register('MMM-WeatherMap', {
       lat: this.config.lat,
       lon: this.config.lon
     })
-  },
-
-  /* Request the continental context grid. In-flight guarded; the
-   * response merges into the cached regional payload. */
-  getAqiWide: function () {
-    this.wideFetching = true
-    this.sendSocketNotification('GET_AQI_WIDE', {})
-  },
-
-  /* Demand-fetch the continental field once a zoom-out would expose
-   * the regional window's boundary (below zoom 6, one level above
-   * the regional layer's floor). */
-  maybeFetchWide: function () {
-    if (this.wideFetchNeeded()) {
-      this.getAqiWide()
-    }
-  },
-
-  /* Pure predicate for the demand fetch: zoomed out, no
-   * continental cached, none in flight, map ready. Tested. */
-  wideFetchNeeded: function () {
-    if (!this.map || !this.mapReady || this.wideFetching) {
-      return false
-    }
-    if (this.aqi && this.aqi.continental) {
-      return false
-    }
-    return this.map.getZoom() < 6
   },
 
   /* Request hourly fields centered on the given point (the map
@@ -304,11 +282,124 @@ Module.register('MMM-WeatherMap', {
     return !!(this.playing && this.playing[this.view])
   },
 
+  /* Constraint decision for the shared map camera, pure given
+   * {view, zoom, center, bounds, home, viewport}: the whole viewport
+   * inside the AQI window → no-op (low zoom alone keeps the current
+   * center); anything else → the selected location, never the
+   * nearest clamped edge. Viewport (not center) is the unit because
+   * re-applying the clamp re-fits the viewport: a center just inside
+   * the edge with the viewport hanging over it would otherwise be
+   * shoved to a viewport-fitting center — the same arbitrary jump as
+   * a clamp. Any other view → clear. The MapLibre calls themselves
+   * (setMinZoom/setMaxBounds/easeTo) stay untested glue, mirroring
+   * the particle-GL pattern. Tested. */
+  aqiConstraintFor: function ({ view, zoom, center, bounds, home, viewport }) {
+    if (view !== 'aqi' || !bounds) {
+      return view === 'aqi' ? { type: 'none' } : { type: 'clear' }
+    }
+    const [[west, south], [east, north]] = bounds
+    // Point-fit when the caller supplies no viewport (unit tests);
+    // the map always passes its live spans.
+    const halfLon = viewport ? viewport.halfLon : 0
+    const halfLat = viewport ? viewport.halfLat : 0
+    const fixedZoom = Math.max(zoom, AQI_MIN_ZOOM)
+    const fits =
+      center[0] - halfLon >= west && center[0] + halfLon <= east &&
+      center[1] - halfLat >= south && center[1] + halfLat <= north
+    if (fits) {
+      if (fixedZoom === zoom) {
+        return { type: 'none' }
+      }
+      return { type: 'correct', zoom: fixedZoom, center: [center[0], center[1]] }
+    }
+    const clamped = [
+      Math.min(Math.max(center[0], west), east),
+      Math.min(Math.max(center[1], south), north)
+    ]
+    return { type: 'correct', zoom: fixedZoom, center: home ? [home[0], home[1]] : clamped }
+  },
+
+  /* Live viewport half-spans in degrees from MapLibre's own bounds —
+   * the same projection its clamp uses — inflated slightly so the
+   * fit predicate never reads looser than the clamp it predicts
+   * (an underestimate would re-admit the re-apply shove). */
+  aqiViewport: function () {
+    const bounds = this.map.getBounds()
+    const inflate = 1.01
+    return {
+      halfLon: ((bounds.getEast() - bounds.getWest()) / 2) * inflate,
+      halfLat: ((bounds.getNorth() - bounds.getSouth()) / 2) * inflate
+    }
+  },
+
+  /* Bounds for the AQI clamp: the fetched field geometry when it has
+   * landed, else the home-centered default rect. */
+  aqiViewBounds: function () {
+    if (this.aqi && this.aqi.field) {
+      return this.aqiBoundsLatLng(this.aqi.field)
+    }
+    return this.defaultAqiBounds(this.config.lat, this.config.lon)
+  },
+
+  /* Clamp the shared map to the regional window. A camera already
+   * inside just gains the clamp; an escaped one glides to the
+   * selected location first (free — constraints land on moveend) so
+   * entry reads as a reset instead of a nudge to an arbitrary edge.
+   * Leaving AQI never comes here — clearViewConstraints releases
+   * both with no camera call, ever. Untested glue (no map under
+   * node --test). */
+  applyViewConstraints: function () {
+    if (!this.map) {
+      return
+    }
+    const bounds = this.aqiViewBounds()
+    const center = this.map.getCenter()
+    const correction = this.aqiConstraintFor({
+      view: 'aqi',
+      zoom: this.map.getZoom(),
+      center: [center.lng, center.lat],
+      bounds,
+      home: this.homeLngLat(),
+      viewport: this.aqiViewport()
+    })
+    if (correction.type !== 'correct') {
+      this.map.setMinZoom(AQI_MIN_ZOOM)
+      this.map.setMaxBounds(bounds)
+      return
+    }
+    this.map.once('moveend', () => {
+      // A mid-glide exit must not clamp the new view.
+      if (this.map && this.isAqiView()) {
+        this.map.setMinZoom(AQI_MIN_ZOOM)
+        this.map.setMaxBounds(bounds)
+      }
+    })
+    this.map.easeTo({ center: correction.center, zoom: correction.zoom, duration: 800, essential: true })
+  },
+
+  /* Release the AQI clamp — defaults are unconstrained, so clearing
+   * restores the other views' freedom. Halts an entry glide still in
+   * flight first: without this the ease runs on into the new view
+   * and the camera drifts there. Never moves the camera itself. */
+  clearViewConstraints: function () {
+    if (!this.map) {
+      return
+    }
+    this.map.stop()
+    this.map.setMaxBounds(null)
+    this.map.setMinZoom(null)
+  },
+
   setView: function (view) {
     if (!VIEWS.includes(view) || view === this.view) {
       return false
     }
     this.view = view
+    if (view === 'aqi') {
+      this.applyViewConstraints()
+    } else {
+      this.clearViewConstraints()
+    }
     this.syncContentToView()
     if (typeof this.sendNotification === 'function') {
       this.sendNotification('WEATHERMAP_VIEW_CHANGED', { view })
@@ -636,15 +727,6 @@ Module.register('MMM-WeatherMap', {
       this.markFeed('aqi', 'error')
       // Keep the previous field (if any) — the next refresh or
       // page load retries.
-    } else if (notification === 'AQI_WIDE_RESULT') {
-      this.wideFetching = false
-      if (payload && payload.continental && this.aqi) {
-        this.aqi.continental = payload.continental
-        this.markFeed('aqi', 'ready')
-        this.updateAqiImage()
-      }
-    } else if (notification === 'AQI_WIDE_ERROR') {
-      this.wideFetching = false
     } else if (notification === 'VECTOR_FRAMES_RESULT') {
       if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
         const key = `${payload.frames[0].time}-${payload.frames[payload.frames.length - 1].time}`
@@ -876,12 +958,12 @@ Module.register('MMM-WeatherMap', {
       this.map.on('move', repositionCallouts)
       this.map.on('resize', repositionCallouts)
       this.map.on('moveend', () => this.scheduleRecenter())
-      this.map.on('moveend', () => this.maybeFetchWide())
       if (this.isWindView()) {
         this.positionWindCallout()
         this.ensureParticleLayer()
       } else if (this.isAqiView()) {
         this.positionAqiCallout()
+        this.applyViewConstraints()
         this.ensureAqiLayer()
       } else {
         this.addRadarLayer()
@@ -1182,6 +1264,26 @@ Module.register('MMM-WeatherMap', {
     return [0, 1, 2].map((channel) => Math.round(lower[1][channel] + (upper[1][channel] - lower[1][channel]) * mix))
   },
 
+  /* MapLibre [[sw], [ne]] bound for a field: the same half-cell
+   * padded rect as aqiBounds, in [lng, lat] order for setMaxBounds.
+   * Pure — tested. */
+  aqiBoundsLatLng: function (field) {
+    const west = field.lon0 - field.dLon / 2
+    const east = field.lon0 + (field.nx - 1) * field.dLon + field.dLon / 2
+    const north = field.lat0 + field.dLat / 2
+    const south = field.lat0 - (field.ny - 1) * field.dLat - field.dLat / 2
+    return [[west, south], [east, north]]
+  },
+
+  /* Home-centered default rect (spans mirror the node_helper grid
+   * window). Pure — tested. */
+  defaultAqiBounds: function (lat, lon) {
+    return [
+      [lon - AQI_DEFAULT_LON_SPAN, lat - AQI_DEFAULT_LAT_SPAN],
+      [lon + AQI_DEFAULT_LON_SPAN, lat + AQI_DEFAULT_LAT_SPAN]
+    ]
+  },
+
   /* ImageSource coordinates for a field: half-cell padding around
    * the outer grid centers, row 0 at the north edge. Pure — tested. */
   aqiBounds: function (field) {
@@ -1241,50 +1343,38 @@ Module.register('MMM-WeatherMap', {
     return big.toDataURL()
   },
 
-  /* (Re)build the washes from the latest fields: continental
-   * context first (bottom), regional detail second (top, dropped
-   * below zoom 5 where its window can't fill the map). Existing
-   * sources get fresh images; missing ones are created. No-op
-   * without a ready map or field — safe to call from the socket
-   * handler. */
+  /* (Re)build the regional wash from the latest field (dropped
+   * below zoom 5 where its window can't fill the map — and the AQI
+   * view never goes there). Existing sources get fresh images;
+   * missing ones are created. No-op without a ready map or field —
+   * safe to call from the socket handler. */
   updateAqiImage: function () {
     if (!this.map || !this.mapReady || !this.aqi || !this.aqi.field) {
       return
     }
-    const layers = [
-      { id: 'aqi-wash-wide', field: this.aqi.continental },
-      { id: 'aqi-wash', field: this.aqi.field, minzoom: 5 }
-    ]
-    layers.forEach(({ id, field, minzoom }) => {
-      if (!field) {
-        return
-      }
-      if (!this.map.getSource(id)) {
-        const layer = {
-          id,
-          type: 'raster',
-          source: id,
-          paint: {
-            'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
-            'raster-opacity-transition': { duration: 350, delay: 0 }
-          }
-        }
-        if (minzoom !== undefined) {
-          layer.minzoom = minzoom
-        }
-        this.map.addSource(id, {
-          type: 'image',
-          url: this.aqiImageUrl(field),
-          coordinates: this.aqiBounds(field)
-        })
-        this.map.addLayer(layer)
-        return
-      }
-      this.map.getSource(id).updateImage({
+    const field = this.aqi.field
+    if (!this.map.getSource('aqi-wash')) {
+      this.map.addSource('aqi-wash', {
+        type: 'image',
         url: this.aqiImageUrl(field),
         coordinates: this.aqiBounds(field)
       })
-    })
+      this.map.addLayer({
+        id: 'aqi-wash',
+        type: 'raster',
+        source: 'aqi-wash',
+        minzoom: AQI_MIN_ZOOM,
+        paint: {
+          'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
+          'raster-opacity-transition': { duration: 350, delay: 0 }
+        }
+      })
+    } else {
+      this.map.getSource('aqi-wash').updateImage({
+        url: this.aqiImageUrl(field),
+        coordinates: this.aqiBounds(field)
+      })
+    }
     if (this.map.getLayer('markers')) {
       this.map.moveLayer('markers')
     }
@@ -1299,29 +1389,25 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Wash visibility switch (after a fade-out completes, or before
-   * fading back in). Both layers move together. */
+   * fading back in). */
   setAqiLayerVisible: function (visible) {
     if (!this.map) {
       return
     }
-    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
-      if (this.map.getLayer(id)) {
-        this.map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
-      }
-    })
+    if (this.map.getLayer('aqi-wash')) {
+      this.map.setLayoutProperty('aqi-wash', 'visibility', visible ? 'visible' : 'none')
+    }
   },
 
-  /* Fade both washes to an opacity (the paint transition glides
-   * them). Per-layer guards for pre-load calls. */
+  /* Fade the wash to an opacity (the paint transition glides it).
+   * Guards the pre-load case. */
   fadeAqiTo: function (opacity) {
     if (!this.map) {
       return
     }
-    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
-      if (this.map.getLayer(id)) {
-        this.map.setPaintProperty(id, 'raster-opacity', opacity)
-      }
-    })
+    if (this.map.getLayer('aqi-wash')) {
+      this.map.setPaintProperty('aqi-wash', 'raster-opacity', opacity)
+    }
   },
 
   scheduleAqiHide: function () {
