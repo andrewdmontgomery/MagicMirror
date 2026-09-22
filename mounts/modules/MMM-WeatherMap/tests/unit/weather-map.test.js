@@ -1888,6 +1888,52 @@ describe('AQI socket handling', () => {
     assert.equal(c.aqi, previous)
     assert.deepEqual(notified, [])
   })
+
+  it('merges the wide field on demand delivery', () => {
+    const refreshed = []
+    const regional = aqiPayload(31)
+    const c = ctx({ aqi: regional, updateAqiImage: () => { refreshed.push(true) } })
+    def.socketNotificationReceived.call(c, 'AQI_WIDE_RESULT', {
+      continental: { nx: 1, ny: 1, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [40] }
+    })
+    assert.equal(c.aqi.field, regional.field)
+    assert.deepEqual(c.aqi.continental.values, [40])
+    assert.deepEqual(refreshed, [true])
+    assert.equal(c.wideFetching, false)
+  })
+
+  it('clears the in-flight flag on wide error', () => {
+    const c = ctx({ aqi: aqiPayload(31), wideFetching: true, updateAqiImage: () => {} })
+    def.socketNotificationReceived.call(c, 'AQI_WIDE_ERROR', {})
+    assert.equal(c.wideFetching, false)
+  })
+})
+
+describe('wideFetchNeeded', () => {
+  function need (zoom, aqi, wideFetching = false) {
+    return def.wideFetchNeeded.call({
+      map: { getZoom: () => zoom },
+      mapReady: true,
+      aqi,
+      wideFetching
+    })
+  }
+
+  it('fires below zoom 6 without a continental field', () => {
+    assert.equal(need(4, { field: {} }), true)
+    assert.equal(need(5.9, { field: {} }), true)
+  })
+
+  it('holds at zoom 6 and above', () => {
+    assert.equal(need(6, { field: {} }), false)
+    assert.equal(need(7, { field: {} }), false)
+  })
+
+  it('holds with continental cached, fetching, or map unready', () => {
+    assert.equal(need(4, { field: {}, continental: {} }), false)
+    assert.equal(need(4, { field: {} }, true), false)
+    assert.equal(def.wideFetchNeeded.call({ map: null, mapReady: false, aqi: null }), false)
+  })
 })
 
 describe('aqi legend', () => {

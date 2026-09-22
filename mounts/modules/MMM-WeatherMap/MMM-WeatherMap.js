@@ -127,6 +127,7 @@ Module.register('MMM-WeatherMap', {
     this.framesKey = null
     this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : 'wind'
     this.aqi = null
+    this.wideFetching = false
     this.wind = null
     this.windIndex = 0
     this.windFields = []
@@ -160,6 +161,11 @@ Module.register('MMM-WeatherMap', {
     }, this.config.windFieldUpdateInterval)
     setInterval(() => {
       this.getAqi()
+      // Continental refresh only once demand-fetched: an unused
+      // wide grid is three requests spent for nothing.
+      if (this.aqi && this.aqi.continental) {
+        this.getAqiWide()
+      }
     }, this.config.aqiUpdateInterval)
   },
 
@@ -199,6 +205,34 @@ Module.register('MMM-WeatherMap', {
       lat: this.config.lat,
       lon: this.config.lon
     })
+  },
+
+  /* Request the continental context grid. In-flight guarded; the
+   * response merges into the cached regional payload. */
+  getAqiWide: function () {
+    this.wideFetching = true
+    this.sendSocketNotification('GET_AQI_WIDE', {})
+  },
+
+  /* Demand-fetch the continental field once a zoom-out would expose
+   * the regional window's boundary (below zoom 6, one level above
+   * the regional layer's floor). */
+  maybeFetchWide: function () {
+    if (this.wideFetchNeeded()) {
+      this.getAqiWide()
+    }
+  },
+
+  /* Pure predicate for the demand fetch: zoomed out, no
+   * continental cached, none in flight, map ready. Tested. */
+  wideFetchNeeded: function () {
+    if (!this.map || !this.mapReady || this.wideFetching) {
+      return false
+    }
+    if (this.aqi && this.aqi.continental) {
+      return false
+    }
+    return this.map.getZoom() < 6
   },
 
   /* Request hourly fields centered on the given point (the map
@@ -588,8 +622,16 @@ Module.register('MMM-WeatherMap', {
         }
       }
     } else if (notification === 'AQI_FIELDS_ERROR') {
-      // Keep the previous field (if any) — the next hourly
-      // refresh retries.
+      // Keep the previous field (if any) — the next refresh or
+      // page load retries.
+    } else if (notification === 'AQI_WIDE_RESULT') {
+      this.wideFetching = false
+      if (payload && payload.continental && this.aqi) {
+        this.aqi.continental = payload.continental
+        this.updateAqiImage()
+      }
+    } else if (notification === 'AQI_WIDE_ERROR') {
+      this.wideFetching = false
     } else if (notification === 'VECTOR_FRAMES_RESULT') {
       if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
         const key = `${payload.frames[0].time}-${payload.frames[payload.frames.length - 1].time}`
@@ -816,6 +858,7 @@ Module.register('MMM-WeatherMap', {
       this.map.on('move', repositionCallouts)
       this.map.on('resize', repositionCallouts)
       this.map.on('moveend', () => this.scheduleRecenter())
+      this.map.on('moveend', () => this.maybeFetchWide())
       if (this.isWindView()) {
         this.positionWindCallout()
         this.ensureParticleLayer()
