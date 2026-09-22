@@ -1788,6 +1788,29 @@ describe('updateAqiImage', () => {
     def.updateAqiImage.call(ctx({ map: null, mapReady: false, aqi: null }))
     def.updateAqiImage.call(ctx({ map: {}, mapReady: false, aqi: { field: FIELD } }))
   })
+
+  it('builds regional alone when continental has not landed', () => {
+    const added = []
+    const map = {
+      getSource: () => undefined,
+      getLayer: () => undefined,
+      addSource: (id) => { added.push(['source', id]) },
+      addLayer: (def) => { added.push(['layer', def.id]) },
+      moveLayer: (id) => { added.push(['move', id]) }
+    }
+    const restore = canvasDocument()
+    try {
+      const c = aqiCtx(map)
+      c.aqi = { field: FIELD, home: { aqi: 30 } }
+      for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
+        c[fn] = (...args) => def[fn].call(c, ...args)
+      }
+      def.updateAqiImage.call(c)
+    } finally {
+      restore()
+    }
+    assert.deepEqual(added, [['source', 'aqi-wash'], ['layer', 'aqi-wash']])
+  })
 })
 
 describe('aqi view opacity', () => {
