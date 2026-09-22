@@ -1724,3 +1724,147 @@ describe('AQI socket handling', () => {
     assert.deepEqual(notified, [])
   })
 })
+
+describe('aqi legend', () => {
+  function withDocument (fn) {
+    const realDocument = global.document
+    global.document = { createElement: () => ({}) }
+    try {
+      return fn()
+    } finally {
+      if (realDocument === undefined) {
+        delete global.document
+      } else {
+        global.document = realDocument
+      }
+    }
+  }
+
+  it('titles the EPA scale with band ticks and a CAMS source line', () => {
+    const legend = withDocument(() => def.legendDiv.call({
+      view: 'aqi',
+      isWindView: def.isWindView,
+      isAqiView: def.isAqiView,
+      windLegendDiv: def.windLegendDiv,
+      aqiLegendDiv: def.aqiLegendDiv,
+      config: {}
+    }))
+    assert.match(legend.innerHTML, /AQI \(US\)/)
+    assert.match(legend.innerHTML, /300\+/)
+    assert.match(legend.innerHTML, /CAMS/)
+  })
+})
+
+describe('aqi badge', () => {
+  it('reads the home value with an EPA-colored ring', () => {
+    const badge = {}
+    def.updateAqiBadge.call({
+      aqiBadge: badge,
+      aqi: { home: { aqi: 93 } },
+      aqiBadgeSvg: def.aqiBadgeSvg,
+      aqiColor: def.aqiColor
+    })
+    assert.match(badge.innerHTML, />93</)
+    assert.match(badge.innerHTML, /AQI/)
+    assert.match(badge.innerHTML, /rgb\(219, 251, 0\)/)
+  })
+
+  it('falls back to an em-dash without a home value', () => {
+    const badge = {}
+    def.updateAqiBadge.call({
+      aqiBadge: badge,
+      aqi: { home: { aqi: null } },
+      aqiBadgeSvg: def.aqiBadgeSvg,
+      aqiColor: def.aqiColor
+    })
+    assert.match(badge.innerHTML, /–/)
+  })
+
+  it('pins the callout above the home marker', () => {
+    const callout = { style: {} }
+    def.positionAqiCallout.call({
+      map: { project: () => ({ x: 100, y: 120 }) },
+      aqiCallout: callout,
+      homeLngLat: () => [0, 0]
+    })
+    assert.equal(callout.style.left, '100px')
+    assert.equal(callout.style.top, '106px')
+  })
+})
+
+describe('aqi chrome', () => {
+  function aqiDom () {
+    const appended = []
+    const realDocument = global.document
+    global.document = {
+      createElement: () => ({
+        className: '',
+        style: {},
+        appendChild (child) { return child },
+        addEventListener () {},
+        setAttribute: () => {}
+      })
+    }
+    const mapDiv = {
+      querySelector: () => null,
+      appendChild (child) {
+        appended.push(child.className)
+        return child
+      }
+    }
+    return {
+      appended,
+      mapDiv,
+      restore () {
+        if (realDocument === undefined) {
+          delete global.document
+        } else {
+          global.document = realDocument
+        }
+      }
+    }
+  }
+
+  it('rebuilds legend plus callout with no timeline', () => {
+    const dom = aqiDom()
+    try {
+      const c = ctx({
+        config: { lat: 10, lon: 20, showLegend: true, showTimeline: true },
+        view: 'aqi',
+        map: { project: () => ({ x: 50, y: 60 }) },
+        mapDiv: dom.mapDiv,
+        aqiCallout: null,
+        aqiBadge: null,
+        aqi: { home: { aqi: 31 } }
+      })
+      for (const fn of ['legendDiv', 'aqiLegendDiv', 'buildAqiCallout', 'updateAqiBadge',
+        'aqiBadgeSvg', 'aqiColor', 'positionAqiCallout', 'homeLngLat', 'timelineDiv']) {
+        c[fn] = (...args) => def[fn].call(c, ...args)
+      }
+      def.rebuildOverlays.call(c)
+      const has = (cls) => dom.appended.some((appended) => appended.includes(cls))
+      assert.ok(has('vector-legend'))
+      assert.ok(has('vector-aqi-marker'))
+      assert.ok(!has('vector-timeline'))
+    } finally {
+      dom.restore()
+    }
+  })
+
+  it('leaves timeline, progress, and frames untouched', () => {
+    const painted = []
+    const c = ctx({
+      view: 'aqi',
+      frames: framesFixture(5),
+      frameIndex: 2,
+      timelineLabel: { set textContent (v) { painted.push(v) }, get textContent () { return undefined } },
+      timelineProgress: { set width (v) { painted.push(v) }, get width () { return undefined } }
+    })
+    def.updateTimeline.call(c)
+    def.paintProgress.call(c)
+    def.scrubTo.call(c, 0.9)
+    def.showFrame.call(c, 4, {})
+    assert.deepEqual(painted, [])
+    assert.equal(c.frameIndex, 2)
+  })
+})

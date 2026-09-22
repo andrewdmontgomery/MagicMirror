@@ -569,10 +569,11 @@ Module.register('MMM-WeatherMap', {
     } else if (notification === 'AQI_FIELDS_RESULT') {
       if (payload && payload.field) {
         this.aqi = payload
-        // In-place refresh (badge follows in Task 5; the layer
-        // follows here) — never updateDom: the module fade would
-        // flash the whole view every data refresh.
+        // In-place refresh (badge plus layer follow) — never
+        // updateDom: the module fade would flash the whole view
+        // every data refresh.
         this.updateAqiImage()
+        this.updateAqiBadge()
         const home = payload.home || {}
         if (typeof this.sendNotification === 'function') {
           this.sendNotification('WEATHERMAP_AQI_UPDATED', {
@@ -702,7 +703,7 @@ Module.register('MMM-WeatherMap', {
     if (!this.mapDiv) {
       return
     }
-    ['vector-legend', 'vector-timeline', 'vector-wind-marker'].forEach((cls) => {
+    ['vector-legend', 'vector-timeline', 'vector-wind-marker', 'vector-aqi-marker'].forEach((cls) => {
       const old = this.mapDiv.querySelector(`.${cls}`)
       if (old) {
         old.remove()
@@ -714,12 +715,21 @@ Module.register('MMM-WeatherMap', {
 
     if (this.isWindView()) {
       this.mapDiv.appendChild(this.buildCallout())
+      this.aqiCallout = null
+      this.aqiBadge = null
+    } else if (this.isAqiView()) {
+      this.mapDiv.appendChild(this.buildAqiCallout())
+      this.windCallout = null
+      this.windBadge = null
     } else {
       this.windCallout = null
       this.windBadge = null
+      this.aqiCallout = null
+      this.aqiBadge = null
     }
 
-    if (this.config.showTimeline) {
+    // The AQI view is static: no timeline chrome at all.
+    if (this.config.showTimeline && !this.isAqiView()) {
       this.mapDiv.appendChild(this.timelineDiv())
     }
     // Fresh callout nodes default to left:0/top:0 (under the legend)
@@ -728,6 +738,7 @@ Module.register('MMM-WeatherMap', {
     // lands on the marker immediately instead of waiting for the next
     // map move. No-op without a map or outside the wind view.
     this.positionWindCallout()
+    this.positionAqiCallout()
   },
 
   /* Location callout: a plain overlay sibling above the map canvas.
@@ -875,6 +886,9 @@ Module.register('MMM-WeatherMap', {
     if (this.isWindView()) {
       return this.windLegendDiv()
     }
+    if (this.isAqiView()) {
+      return this.aqiLegendDiv()
+    }
     const legend = document.createElement('div')
     legend.className = 'vector-legend'
     legend.innerHTML =
@@ -884,6 +898,22 @@ Module.register('MMM-WeatherMap', {
       '<div class="vector-legend-labels">' +
       '<span>Extreme</span><span>Heavy</span><span>Moderate</span><span>Light</span>' +
       '</div></div>'
+    return legend
+  },
+
+  /* AQI legend: the same pill layout as the other views, titled
+   * "AQI (US)" over the EPA band scale with a CAMS source line. */
+  aqiLegendDiv: function () {
+    const legend = document.createElement('div')
+    legend.className = 'vector-legend vector-legend-aqi'
+    legend.innerHTML =
+      '<div class="vector-legend-title">AQI (US)</div>' +
+      '<div class="vector-legend-body">' +
+      '<div class="vector-legend-bar vector-legend-bar-aqi"></div>' +
+      '<div class="vector-legend-labels">' +
+      '<span>300+</span><span>200</span><span>150</span><span>100</span><span>50</span><span>0</span>' +
+      '</div></div>' +
+      '<div class="vector-legend-source">CAMS via Open-Meteo</div>'
     return legend
   },
 
@@ -990,6 +1020,59 @@ Module.register('MMM-WeatherMap', {
     const direction = this.windCompass16(current.direction)
     const speed = Math.round(current.speed)
     this.windBadge.innerHTML = this.windBadgeSvg(direction, speed, scale.unit.toUpperCase())
+  },
+
+  /* Location callout for the AQI view: the same circle-and-tail
+   * chrome as the wind badge, reading the home AQI number over
+   * "AQI" with the ring stroked in the value's EPA color. */
+  buildAqiCallout: function () {
+    const callout = document.createElement('div')
+    callout.className = 'vector-aqi-marker'
+    const badge = document.createElement('div')
+    badge.className = 'vector-aqi-badge'
+    callout.appendChild(badge)
+    this.aqiCallout = callout
+    this.aqiBadge = badge
+    this.updateAqiBadge()
+    return callout
+  },
+
+  /* AQI badge SVG: same 62×66 geometry as the wind badge, minus the
+   * compass row — the value sits larger in its place. */
+  aqiBadgeSvg: function (value, color) {
+    const stroke = color ? `rgb(${color[0]}, ${color[1]}, ${color[2]})` : 'rgba(255,255,255,0.9)'
+    return (
+      '<svg viewBox="0 0 62 66" width="62" height="66" aria-hidden="true">' +
+      `<path d="M24.53,53.15 L31,62 L37.47,53.15 A25,25 0 1 0 24.53,53.15 Z" fill="#2C353C" stroke="${stroke}" stroke-width="2" stroke-linejoin="round"/>` +
+      `<text class="vector-aqi-badge-value" x="31" y="36" text-anchor="middle">${value}</text>` +
+      '<text class="vector-aqi-badge-unit" x="31" y="46" text-anchor="middle">AQI</text>' +
+      '</svg>'
+    )
+  },
+
+  /* Home AQI readout — the live field's home value, rounded.
+   * Em-dash when the field hasn't arrived or the value is null. */
+  updateAqiBadge: function () {
+    if (!this.aqiBadge) {
+      return
+    }
+    const aqi = this.aqi && this.aqi.home ? this.aqi.home.aqi : null
+    if (aqi === null || aqi === undefined) {
+      this.aqiBadge.innerHTML = this.aqiBadgeSvg('–', null)
+      return
+    }
+    this.aqiBadge.innerHTML = this.aqiBadgeSvg(Math.round(aqi), this.aqiColor(aqi))
+  },
+
+  /* Pin the AQI callout above the home marker, tail tip hovering
+   * a short distance above the dot — same hover as the wind callout. */
+  positionAqiCallout: function () {
+    if (!this.map || !this.aqiCallout) {
+      return
+    }
+    const point = this.map.project(this.homeLngLat())
+    this.aqiCallout.style.left = `${point.x}px`
+    this.aqiCallout.style.top = `${point.y - 14}px`
   },
 
   /* AQI color through the EPA stops: green reads good, maroon
@@ -1452,6 +1535,10 @@ Module.register('MMM-WeatherMap', {
 
   /* Display one frame: paint swap plus timeline label + progress. */
   showFrame: function (index, { paint = true, prev } = {}) {
+    // The static AQI view has no frames to display.
+    if (this.isAqiView()) {
+      return
+    }
     if (this.isWindView()) {
       this.showWindFrame(index)
       return
@@ -1515,6 +1602,10 @@ Module.register('MMM-WeatherMap', {
   },
 
   scrubTo: function (ratio) {
+    // The static AQI view has no frames to scrub.
+    if (this.isAqiView()) {
+      return
+    }
     if (this.isWindView()) {
       const slots = this.windSlots()
       if (slots.length === 0) {
@@ -1775,6 +1866,10 @@ Module.register('MMM-WeatherMap', {
     if (!this.timelineLabel) {
       return
     }
+    // The AQI view builds no timeline chrome — never touch it here.
+    if (this.isAqiView()) {
+      return
+    }
     if (this.isWindView()) {
       this.updateWindTimeline()
       return
@@ -1833,8 +1928,12 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Paint the progress fill for the current view and frame, gliding
-   * from the last frame swap. No-op before the track exists. */
+   * from the last frame swap. No-op before the track exists, and
+   * always a no-op in the static AQI view. */
   paintProgress: function () {
+    if (this.isAqiView()) {
+      return
+    }
     if (!this.timelineProgress) {
       return
     }
