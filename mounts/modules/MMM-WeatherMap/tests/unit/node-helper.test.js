@@ -468,8 +468,11 @@ describe('fetchAqi', () => {
     }
     await helper.fetchAqi({ lat: 40, lon: -100 })
     assert.match(fetchedUrls[0], /air-quality-api\.open-meteo\.com.*current=us_aqi/)
-    assert.match(fetchedUrls[0], /latitude=.*%2C|latitude=.*,/)
-    assert.equal(sent.length, 1)
+    // One lat/lon pair per grid node (15x21), row-major.
+    const latitudes = fetchedUrls[0].match(/latitude=([^&]*)/)[1].split(',')
+    const longitudes = fetchedUrls[0].match(/longitude=([^&]*)/)[1].split(',')
+    assert.equal(latitudes.length, 315)
+    assert.equal(longitudes.length, 315)
     assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
     assert.equal(sent[0][1].field.values.length, 315)
     assert.equal(sent[0][1].home.aqi, 31)

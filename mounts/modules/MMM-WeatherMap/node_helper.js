@@ -347,10 +347,18 @@ module.exports = NodeHelper.create({
     }
     try {
       const params = this.aqiGridParams(lat, lon)
-      const lats = params.lats.join(',')
-      const lons = params.lons.join(',')
+      // Multi-location requests take one lat/lon pair per grid
+      // node, row-major to match mapAqiResponse indexing.
+      const plat = []
+      const plon = []
+      for (const la of params.lats) {
+        for (const lo of params.lons) {
+          plat.push(la)
+          plon.push(lo)
+        }
+      }
       const url =
-        `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lats}&longitude=${lons}` +
+        `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${plat.join(',')}&longitude=${plon.join(',')}` +
         '&current=us_aqi'
       const response = await fetch(url)
       if (!response.ok) {
