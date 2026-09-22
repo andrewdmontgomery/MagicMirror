@@ -399,6 +399,20 @@ describe('aqiGridParams', () => {
     assert.equal(params.lons[0], -110)
     assert.equal(params.lons[20], -90)
   })
+
+  it('builds the fixed continental window at 2-degree steps', () => {
+    const params = helper.aqiWideParams()
+    assert.equal(params.nx, 31)
+    assert.equal(params.ny, 14)
+    assert.equal(params.lat0, 50)
+    assert.equal(params.lon0, -126)
+    assert.equal(params.dLat, 2)
+    assert.equal(params.dLon, 2)
+    assert.equal(params.lats[0], 50)
+    assert.equal(params.lats[13], 24)
+    assert.equal(params.lons[0], -126)
+    assert.equal(params.lons[30], -66)
+  })
 })
 
 describe('mapAqiResponse', () => {
@@ -453,28 +467,39 @@ describe('mapAqiResponse', () => {
 })
 
 describe('fetchAqi', () => {
-  function aqiList (value = 31) {
-    return Array.from({ length: 315 }, () => ({
+  function aqiList (count, value = 31) {
+    return Array.from({ length: count }, () => ({
       latitude: 40,
       longitude: -100,
       current: { time: '2026-09-21T20:00', us_aqi: value }
     }))
   }
 
-  it('requests one multi-location current-us_aqi grid and maps the payload', async () => {
-    global.fetch = async (url) => {
+  function gridFetch () {
+    return async (url) => {
       fetchedUrls.push(url)
-      return { ok: true, json: async () => aqiList() }
+      // One location per grid node: size the fixture to the request.
+      const count = url.match(/latitude=([^&]*)/)[1].split(',').length
+      return { ok: true, json: async () => aqiList(count) }
     }
+  }
+
+  it('requests regional plus continental grids and maps both', async () => {
+    global.fetch = gridFetch()
     await helper.fetchAqi({ lat: 40, lon: -100 })
+    assert.equal(fetchedUrls.length, 2)
     assert.match(fetchedUrls[0], /air-quality-api\.open-meteo\.com.*current=us_aqi/)
-    // One lat/lon pair per grid node (15x21), row-major.
-    const latitudes = fetchedUrls[0].match(/latitude=([^&]*)/)[1].split(',')
-    const longitudes = fetchedUrls[0].match(/longitude=([^&]*)/)[1].split(',')
-    assert.equal(latitudes.length, 315)
-    assert.equal(longitudes.length, 315)
+    // One lat/lon pair per grid node (15x21 regional, 14x31 wide).
+    for (const [url, nodes] of [[fetchedUrls[0], 315], [fetchedUrls[1], 434]]) {
+      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
+      const longitudes = url.match(/longitude=([^&]*)/)[1].split(',')
+      assert.equal(latitudes.length, nodes)
+      assert.equal(longitudes.length, nodes)
+    }
+    assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
     assert.equal(sent[0][1].field.values.length, 315)
+    assert.equal(sent[0][1].continental.values.length, 434)
     assert.equal(sent[0][1].home.aqi, 31)
   })
 
