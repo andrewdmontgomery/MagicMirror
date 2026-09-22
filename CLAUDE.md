@@ -19,7 +19,7 @@ There is no build step. Lint with `npm run lint` (after `npm ci`; ESLint 9 + neo
 
 ## Skills
 
-Load these with the skill tool when the task matches — never hand-roll the workflow a skill already covers:
+Load these with the skill tool when the task matches — never hand-roll the workflow a skill already covers. Load them **before** acting (mapping code, editing, planning the approach), not after — the trigger list below is the discovery mechanism:
 
 - `modern-javascript-patterns` (`.claude/skills/`) — JS style for module front-ends and helpers. Use for any JS you write or review here.
 - `node-testing` (`.claude/skills/`) — how tests are written and run in this repo. Use when adding or changing tests.
@@ -64,3 +64,5 @@ Two things worth knowing before touching this module:
 ## Git
 
 `main` is the default branch. `weather-module` also exists (it was the original working branch before `main` was created from its tip).
+
+Never edit on `main`: create the feature branch first and verify with `git branch --show-current` **before** the first file change — including scratch or prototype edits. `main` only moves via merges/PRs.
