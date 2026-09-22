@@ -293,7 +293,8 @@ Module.register('MMM-WeatherMap', {
     if (this.isWindView()) {
       this.fadeRadarTo(0)
       this.scheduleRadarHide()
-      this.setAqiLayerVisible(false)
+      this.fadeAqiTo(0)
+      this.scheduleAqiHide()
       if (this.mapReady) {
         this.ensureParticleLayer()
       }
@@ -302,11 +303,13 @@ Module.register('MMM-WeatherMap', {
       this.fadeRadarTo(0)
       this.scheduleRadarHide()
       this.setAqiLayerVisible(true)
+      this.fadeAqiTo(this.config.aqiOpacity)
       this.updateAqiImage()
     } else {
       this.fadeParticlesOut()
       this.setRadarLayersVisible(true)
-      this.setAqiLayerVisible(false)
+      this.fadeAqiTo(0)
+      this.scheduleAqiHide()
     }
     this.positionWindCallout()
     this.positionAqiCallout()

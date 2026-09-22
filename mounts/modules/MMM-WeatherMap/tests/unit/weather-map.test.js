@@ -1779,6 +1779,42 @@ describe('updateAqiImage', () => {
   })
 })
 
+describe('aqi view opacity', () => {
+  function opacityCtx (view) {
+    const paint = []
+    const layout = []
+    const map = {
+      getSource: () => ({}),
+      getLayer: () => ({}),
+      setPaintProperty: (...args) => { paint.push(args) },
+      setLayoutProperty: (...args) => { layout.push(args) }
+    }
+    const c = ctx({ view, map, config: { aqiOpacity: 0.8 } })
+    for (const fn of ['updateViewButtons', 'restartAnimation', 'fadeRadarTo', 'scheduleRadarHide',
+      'fadeParticlesOut', 'updateAqiImage', 'updateAqiBadge', 'positionWindCallout',
+      'positionAqiCallout', 'scheduleAqiHide', 'setRadarLayersVisible']) {
+      c[fn] = () => {}
+    }
+    for (const fn of ['syncContentToView', 'isWindView', 'isAqiView', 'setAqiLayerVisible', 'fadeAqiTo']) {
+      c[fn] = (...args) => def[fn].call(c, ...args)
+    }
+    return { c, paint, layout }
+  }
+
+  it('fades the wash in on entering the aqi view', () => {
+    const { c, paint, layout } = opacityCtx('aqi')
+    def.syncContentToView.call(c)
+    assert.ok(paint.some(([layer, prop, value]) => layer === 'aqi-wash' && prop === 'raster-opacity' && value === 0.8))
+    assert.ok(layout.some(([layer, prop, value]) => layer === 'aqi-wash' && prop === 'visibility' && value === 'visible'))
+  })
+
+  it('fades the wash out on leaving for the wind view', () => {
+    const { c, paint } = opacityCtx('wind')
+    def.syncContentToView.call(c)
+    assert.ok(paint.some(([layer, prop, value]) => layer === 'aqi-wash' && prop === 'raster-opacity' && value === 0))
+  })
+})
+
 describe('AQI socket handling', () => {
   function aqiPayload (aqi = 93) {
     return {
