@@ -1777,7 +1777,6 @@ describe('aqiConstraintFor', () => {
 
 describe('updateAqiImage', () => {
   const FIELD = { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30, 30, 30, 30] }
-  const WIDE = { nx: 3, ny: 2, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [20, 20, 20, 20, 20, 20] }
 
   function canvasDocument () {
     const realDocument = global.document
@@ -1814,15 +1813,15 @@ describe('updateAqiImage', () => {
       mapReady: true,
       view: 'aqi',
       config: { aqiOpacity: 0.8 },
-      aqi: { field: FIELD, continental: WIDE, home: { aqi: 30 } }
+      aqi: { field: FIELD, home: { aqi: 30 } }
     })
   }
 
-  it('pushes fresh images through the ImageSource API', () => {
+  it('pushes a fresh image through the ImageSource API', () => {
     const updated = []
     const source = { updateImage: (opts) => updated.push(opts) }
     const map = {
-      getSource: (id) => (id === 'aqi-wash' || id === 'aqi-wash-wide' ? source : undefined),
+      getSource: (id) => (id === 'aqi-wash' ? source : undefined),
       getLayer: () => undefined
     }
     const c = aqiCtx(map)
@@ -1835,15 +1834,12 @@ describe('updateAqiImage', () => {
     } finally {
       restore()
     }
-    assert.equal(updated.length, 2)
-    for (const opts of updated) {
-      assert.equal(opts.url, 'data:image/png,aqi')
-    }
-    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, WIDE))
-    assert.deepEqual(updated[1].coordinates, def.aqiBounds.call(c, FIELD))
+    assert.equal(updated.length, 1)
+    assert.equal(updated[0].url, 'data:image/png,aqi')
+    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, FIELD))
   })
 
-  it('creates both sources with detail on top on first call', () => {
+  it('creates the source on first call', () => {
     const added = []
     const map = {
       getSource: () => undefined,
@@ -1863,8 +1859,6 @@ describe('updateAqiImage', () => {
       restore()
     }
     assert.deepEqual(added, [
-      ['source', 'aqi-wash-wide'],
-      ['layer', 'aqi-wash-wide'],
       ['source', 'aqi-wash'],
       ['layer', 'aqi-wash'],
       ['move', 'markers']
@@ -1874,29 +1868,6 @@ describe('updateAqiImage', () => {
   it('no-ops without a ready map or field', () => {
     def.updateAqiImage.call(ctx({ map: null, mapReady: false, aqi: null }))
     def.updateAqiImage.call(ctx({ map: {}, mapReady: false, aqi: { field: FIELD } }))
-  })
-
-  it('builds regional alone when continental has not landed', () => {
-    const added = []
-    const map = {
-      getSource: () => undefined,
-      getLayer: () => undefined,
-      addSource: (id) => { added.push(['source', id]) },
-      addLayer: (def) => { added.push(['layer', def.id]) },
-      moveLayer: (id) => { added.push(['move', id]) }
-    }
-    const restore = canvasDocument()
-    try {
-      const c = aqiCtx(map)
-      c.aqi = { field: FIELD, home: { aqi: 30 } }
-      for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
-        c[fn] = (...args) => def[fn].call(c, ...args)
-      }
-      def.updateAqiImage.call(c)
-    } finally {
-      restore()
-    }
-    assert.deepEqual(added, [['source', 'aqi-wash'], ['layer', 'aqi-wash']])
   })
 })
 
@@ -1922,21 +1893,17 @@ describe('aqi view opacity', () => {
     return { c, paint, layout }
   }
 
-  it('fades both washes in on entering the aqi view', () => {
+  it('fades the wash in on entering the aqi view', () => {
     const { c, paint, layout } = opacityCtx('aqi')
     def.syncContentToView.call(c)
-    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
-      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0.8))
-      assert.ok(layout.some(([l, prop, value]) => l === layer && prop === 'visibility' && value === 'visible'))
-    }
+    assert.ok(paint.some(([l, prop, value]) => l === 'aqi-wash' && prop === 'raster-opacity' && value === 0.8))
+    assert.ok(layout.some(([l, prop, value]) => l === 'aqi-wash' && prop === 'visibility' && value === 'visible'))
   })
 
-  it('fades both washes out on leaving for the wind view', () => {
+  it('fades the wash out on leaving for the wind view', () => {
     const { c, paint } = opacityCtx('wind')
     def.syncContentToView.call(c)
-    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
-      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0))
-    }
+    assert.ok(paint.some(([l, prop, value]) => l === 'aqi-wash' && prop === 'raster-opacity' && value === 0))
   })
 })
 
@@ -1974,52 +1941,6 @@ describe('AQI socket handling', () => {
     def.socketNotificationReceived.call(c, 'AQI_FIELDS_ERROR', {})
     assert.equal(c.aqi, previous)
     assert.deepEqual(notified, [])
-  })
-
-  it('merges the wide field on demand delivery', () => {
-    const refreshed = []
-    const regional = aqiPayload(31)
-    const c = ctx({ aqi: regional, updateAqiImage: () => { refreshed.push(true) } })
-    def.socketNotificationReceived.call(c, 'AQI_WIDE_RESULT', {
-      continental: { nx: 1, ny: 1, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [40] }
-    })
-    assert.equal(c.aqi.field, regional.field)
-    assert.deepEqual(c.aqi.continental.values, [40])
-    assert.deepEqual(refreshed, [true])
-    assert.equal(c.wideFetching, false)
-  })
-
-  it('clears the in-flight flag on wide error', () => {
-    const c = ctx({ aqi: aqiPayload(31), wideFetching: true, updateAqiImage: () => {} })
-    def.socketNotificationReceived.call(c, 'AQI_WIDE_ERROR', {})
-    assert.equal(c.wideFetching, false)
-  })
-})
-
-describe('wideFetchNeeded', () => {
-  function need (zoom, aqi, wideFetching = false) {
-    return def.wideFetchNeeded.call({
-      map: { getZoom: () => zoom },
-      mapReady: true,
-      aqi,
-      wideFetching
-    })
-  }
-
-  it('fires below zoom 6 without a continental field', () => {
-    assert.equal(need(4, { field: {} }), true)
-    assert.equal(need(5.9, { field: {} }), true)
-  })
-
-  it('holds at zoom 6 and above', () => {
-    assert.equal(need(6, { field: {} }), false)
-    assert.equal(need(7, { field: {} }), false)
-  })
-
-  it('holds with continental cached, fetching, or map unready', () => {
-    assert.equal(need(4, { field: {}, continental: {} }), false)
-    assert.equal(need(4, { field: {} }, true), false)
-    assert.equal(def.wideFetchNeeded.call({ map: null, mapReady: false, aqi: null }), false)
   })
 })
 

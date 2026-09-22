@@ -409,31 +409,15 @@ describe('aqiGridParams', () => {
     assert.equal(params.lons[20], -90)
   })
 
-  it('builds the fixed continental window at 2-degree steps', () => {
-    const params = helper.aqiWideParams()
-    assert.equal(params.nx, 42)
-    assert.equal(params.ny, 24)
-    assert.equal(params.lat0, 60)
-    assert.equal(params.lon0, -134)
-    assert.equal(params.dLat, 2)
-    assert.equal(params.dLon, 2)
-    assert.equal(params.lats[0], 60)
-    assert.equal(params.lats[23], 14)
-    assert.equal(params.lons[0], -134)
-    assert.equal(params.lons[41], -52)
-  })
-
-  it('chunks grid pairs row-major within request size', () => {
-    const params = helper.aqiWideParams()
+  it('fits the regional grid in a single request', () => {
+    const params = helper.aqiGridParams(40, -100)
     const chunks = helper.aqiChunks(params, 350)
-    assert.equal(chunks.length, 3)
-    assert.equal(chunks[0].length, 350)
-    assert.equal(chunks[2].length, 308)
+    assert.equal(chunks.length, 1)
+    assert.equal(chunks[0].length, 315)
     // Order preserved: first pair is the northwest corner.
-    assert.deepEqual(chunks[0][0], [60, -134])
+    assert.deepEqual(chunks[0][0], [47, -110])
     const flat = chunks.flat()
-    assert.equal(flat.length, 24 * 42)
-    assert.deepEqual(flat[flat.length - 1], [14, -52])
+    assert.deepEqual(flat[flat.length - 1], [33, -90])
   })
 })
 
@@ -506,7 +490,7 @@ describe('fetchAqi', () => {
     }
   }
 
-  it('requests the regional grid and maps the payload', async () => {
+  it('requests the regional grid only and maps the payload', async () => {
     const waits = []
     const realWait = helper.waitMs
     helper.waitMs = async (ms) => { waits.push(ms) }
@@ -516,27 +500,21 @@ describe('fetchAqi', () => {
     } finally {
       helper.waitMs = realWait
     }
-    // Regional first (badge in seconds), full payload when wide lands.
-    assert.equal(fetchedUrls.length, 4)
+    // Regional only: one 315-location request, one send, no gaps.
+    assert.equal(fetchedUrls.length, 1)
     for (const url of fetchedUrls) {
       assert.match(url, /air-quality-api\.open-meteo\.com.*current=us_aqi/)
       const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
       const longitudes = url.match(/longitude=([^&]*)/)[1].split(',')
       assert.equal(latitudes.length, longitudes.length)
-      assert.ok(latitudes.length <= 350)
+      assert.equal(latitudes.length, 315)
     }
-    assert.equal(sent.length, 2)
+    assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
     assert.equal(sent[0][1].field.values.length, 315)
     assert.equal(sent[0][1].continental, undefined)
     assert.equal(sent[0][1].home.aqi, 31)
-    assert.equal(sent[1][0], 'AQI_FIELDS_RESULT')
-    assert.equal(sent[1][1].field.values.length, 315)
-    assert.equal(sent[1][1].continental.values.length, 24 * 42)
-    assert.equal(sent[1][1].home.aqi, 31)
-    // Rate-limit gaps: one between regional and continental, then
-    // between the wide chunks — startup never bursts over budget.
-    assert.deepEqual(waits, [60000, 60000, 60000])
+    assert.deepEqual(waits, [])
   })
 
   it('sends nothing without coordinates', async () => {
@@ -552,58 +530,6 @@ describe('fetchAqi', () => {
     await helper.fetchAqi({ lat: 40, lon: -100 })
     assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_ERROR')
-  })
-})
-
-describe('fetchAqiWide', () => {
-  function wideFetch () {
-    return async (url) => {
-      fetchedUrls.push(url)
-      const count = url.match(/latitude=([^&]*)/)[1].split(',').length
-      return {
-        ok: true,
-        json: async () => Array.from({ length: count }, () => ({
-          latitude: 50,
-          longitude: -100,
-          current: { time: '2026-09-21T20:00', us_aqi: 40 }
-        }))
-      }
-    }
-  }
-
-  it('fetches the fixed continental window in chunks', async () => {
-    const waits = []
-    const realWait = helper.waitMs
-    helper.waitMs = async (ms) => { waits.push(ms) }
-    try {
-      global.fetch = wideFetch()
-      await helper.fetchAqiWide()
-    } finally {
-      helper.waitMs = realWait
-    }
-    assert.equal(fetchedUrls.length, 3)
-    for (const url of fetchedUrls) {
-      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
-      assert.ok(latitudes.length <= 350)
-    }
-    assert.match(fetchedUrls[0], /latitude=60/)
-    assert.equal(sent.length, 1)
-    assert.equal(sent[0][0], 'AQI_WIDE_RESULT')
-    assert.equal(sent[0][1].continental.values.length, 24 * 42)
-    assert.deepEqual(waits, [60000, 60000])
-  })
-
-  it('reports wide failure without touching the regional field', async () => {
-    const realWait = helper.waitMs
-    helper.waitMs = async () => {}
-    try {
-      global.fetch = async () => ({ ok: false, status: 500 })
-      await helper.fetchAqiWide()
-    } finally {
-      helper.waitMs = realWait
-    }
-    assert.equal(sent.length, 1)
-    assert.equal(sent[0][0], 'AQI_WIDE_ERROR')
   })
 })
 

@@ -139,7 +139,6 @@ Module.register('MMM-WeatherMap', {
     this.framesKey = null
     this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : 'wind'
     this.aqi = null
-    this.wideFetching = false
     this.feeds = { precip: {}, wind: {}, aqi: {} }
     this.statusEl = null
     this.wind = null
@@ -175,11 +174,6 @@ Module.register('MMM-WeatherMap', {
     }, this.config.windFieldUpdateInterval)
     setInterval(() => {
       this.getAqi()
-      // Continental refresh only once demand-fetched: an unused
-      // wide grid is three requests spent for nothing.
-      if (this.aqi && this.aqi.continental) {
-        this.getAqiWide()
-      }
     }, this.config.aqiUpdateInterval)
   },
 
@@ -222,34 +216,6 @@ Module.register('MMM-WeatherMap', {
       lat: this.config.lat,
       lon: this.config.lon
     })
-  },
-
-  /* Request the continental context grid. In-flight guarded; the
-   * response merges into the cached regional payload. */
-  getAqiWide: function () {
-    this.wideFetching = true
-    this.sendSocketNotification('GET_AQI_WIDE', {})
-  },
-
-  /* Demand-fetch the continental field once a zoom-out would expose
-   * the regional window's boundary (below zoom 6, one level above
-   * the regional layer's floor). */
-  maybeFetchWide: function () {
-    if (this.wideFetchNeeded()) {
-      this.getAqiWide()
-    }
-  },
-
-  /* Pure predicate for the demand fetch: zoomed out, no
-   * continental cached, none in flight, map ready. Tested. */
-  wideFetchNeeded: function () {
-    if (!this.map || !this.mapReady || this.wideFetching) {
-      return false
-    }
-    if (this.aqi && this.aqi.continental) {
-      return false
-    }
-    return this.map.getZoom() < 6
   },
 
   /* Request hourly fields centered on the given point (the map
@@ -727,15 +693,6 @@ Module.register('MMM-WeatherMap', {
       this.markFeed('aqi', 'error')
       // Keep the previous field (if any) — the next refresh or
       // page load retries.
-    } else if (notification === 'AQI_WIDE_RESULT') {
-      this.wideFetching = false
-      if (payload && payload.continental && this.aqi) {
-        this.aqi.continental = payload.continental
-        this.markFeed('aqi', 'ready')
-        this.updateAqiImage()
-      }
-    } else if (notification === 'AQI_WIDE_ERROR') {
-      this.wideFetching = false
     } else if (notification === 'VECTOR_FRAMES_RESULT') {
       if (payload && Array.isArray(payload.frames) && payload.frames.length > 0) {
         const key = `${payload.frames[0].time}-${payload.frames[payload.frames.length - 1].time}`
@@ -967,7 +924,6 @@ Module.register('MMM-WeatherMap', {
       this.map.on('move', repositionCallouts)
       this.map.on('resize', repositionCallouts)
       this.map.on('moveend', () => this.scheduleRecenter())
-      this.map.on('moveend', () => this.maybeFetchWide())
       if (this.isWindView()) {
         this.positionWindCallout()
         this.ensureParticleLayer()
@@ -1353,50 +1309,38 @@ Module.register('MMM-WeatherMap', {
     return big.toDataURL()
   },
 
-  /* (Re)build the washes from the latest fields: continental
-   * context first (bottom), regional detail second (top, dropped
-   * below zoom 5 where its window can't fill the map). Existing
-   * sources get fresh images; missing ones are created. No-op
-   * without a ready map or field — safe to call from the socket
-   * handler. */
+  /* (Re)build the regional wash from the latest field (dropped
+   * below zoom 5 where its window can't fill the map — and the AQI
+   * view never goes there). Existing sources get fresh images;
+   * missing ones are created. No-op without a ready map or field —
+   * safe to call from the socket handler. */
   updateAqiImage: function () {
     if (!this.map || !this.mapReady || !this.aqi || !this.aqi.field) {
       return
     }
-    const layers = [
-      { id: 'aqi-wash-wide', field: this.aqi.continental },
-      { id: 'aqi-wash', field: this.aqi.field, minzoom: AQI_MIN_ZOOM }
-    ]
-    layers.forEach(({ id, field, minzoom }) => {
-      if (!field) {
-        return
-      }
-      if (!this.map.getSource(id)) {
-        const layer = {
-          id,
-          type: 'raster',
-          source: id,
-          paint: {
-            'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
-            'raster-opacity-transition': { duration: 350, delay: 0 }
-          }
-        }
-        if (minzoom !== undefined) {
-          layer.minzoom = minzoom
-        }
-        this.map.addSource(id, {
-          type: 'image',
-          url: this.aqiImageUrl(field),
-          coordinates: this.aqiBounds(field)
-        })
-        this.map.addLayer(layer)
-        return
-      }
-      this.map.getSource(id).updateImage({
+    const field = this.aqi.field
+    if (!this.map.getSource('aqi-wash')) {
+      this.map.addSource('aqi-wash', {
+        type: 'image',
         url: this.aqiImageUrl(field),
         coordinates: this.aqiBounds(field)
       })
-    })
+      this.map.addLayer({
+        id: 'aqi-wash',
+        type: 'raster',
+        source: 'aqi-wash',
+        minzoom: AQI_MIN_ZOOM,
+        paint: {
+          'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
+          'raster-opacity-transition': { duration: 350, delay: 0 }
+        }
+      })
+    } else {
+      this.map.getSource('aqi-wash').updateImage({
+        url: this.aqiImageUrl(field),
+        coordinates: this.aqiBounds(field)
+      })
+    }
     if (this.map.getLayer('markers')) {
       this.map.moveLayer('markers')
     }
@@ -1411,29 +1355,25 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Wash visibility switch (after a fade-out completes, or before
-   * fading back in). Both layers move together. */
+   * fading back in). */
   setAqiLayerVisible: function (visible) {
     if (!this.map) {
       return
     }
-    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
-      if (this.map.getLayer(id)) {
-        this.map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
-      }
-    })
+    if (this.map.getLayer('aqi-wash')) {
+      this.map.setLayoutProperty('aqi-wash', 'visibility', visible ? 'visible' : 'none')
+    }
   },
 
-  /* Fade both washes to an opacity (the paint transition glides
-   * them). Per-layer guards for pre-load calls. */
+  /* Fade the wash to an opacity (the paint transition glides it).
+   * Guards the pre-load case. */
   fadeAqiTo: function (opacity) {
     if (!this.map) {
       return
     }
-    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
-      if (this.map.getLayer(id)) {
-        this.map.setPaintProperty(id, 'raster-opacity', opacity)
-      }
-    })
+    if (this.map.getLayer('aqi-wash')) {
+      this.map.setPaintProperty('aqi-wash', 'raster-opacity', opacity)
+    }
   },
 
   scheduleAqiHide: function () {
