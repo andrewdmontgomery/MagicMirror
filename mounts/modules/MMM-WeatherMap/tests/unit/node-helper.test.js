@@ -402,16 +402,29 @@ describe('aqiGridParams', () => {
 
   it('builds the fixed continental window at 2-degree steps', () => {
     const params = helper.aqiWideParams()
-    assert.equal(params.nx, 31)
-    assert.equal(params.ny, 14)
-    assert.equal(params.lat0, 50)
-    assert.equal(params.lon0, -126)
+    assert.equal(params.nx, 42)
+    assert.equal(params.ny, 24)
+    assert.equal(params.lat0, 60)
+    assert.equal(params.lon0, -134)
     assert.equal(params.dLat, 2)
     assert.equal(params.dLon, 2)
-    assert.equal(params.lats[0], 50)
-    assert.equal(params.lats[13], 24)
-    assert.equal(params.lons[0], -126)
-    assert.equal(params.lons[30], -66)
+    assert.equal(params.lats[0], 60)
+    assert.equal(params.lats[23], 14)
+    assert.equal(params.lons[0], -134)
+    assert.equal(params.lons[41], -52)
+  })
+
+  it('chunks grid pairs row-major within request size', () => {
+    const params = helper.aqiWideParams()
+    const chunks = helper.aqiChunks(params, 350)
+    assert.equal(chunks.length, 3)
+    assert.equal(chunks[0].length, 350)
+    assert.equal(chunks[2].length, 308)
+    // Order preserved: first pair is the northwest corner.
+    assert.deepEqual(chunks[0][0], [60, -134])
+    const flat = chunks.flat()
+    assert.equal(flat.length, 24 * 42)
+    assert.deepEqual(flat[flat.length - 1], [14, -52])
   })
 })
 
@@ -487,19 +500,19 @@ describe('fetchAqi', () => {
   it('requests regional plus continental grids and maps both', async () => {
     global.fetch = gridFetch()
     await helper.fetchAqi({ lat: 40, lon: -100 })
-    assert.equal(fetchedUrls.length, 2)
-    assert.match(fetchedUrls[0], /air-quality-api\.open-meteo\.com.*current=us_aqi/)
-    // One lat/lon pair per grid node (15x21 regional, 14x31 wide).
-    for (const [url, nodes] of [[fetchedUrls[0], 315], [fetchedUrls[1], 434]]) {
+    // Regional fits one request; continental rides three chunks.
+    assert.equal(fetchedUrls.length, 4)
+    for (const url of fetchedUrls) {
+      assert.match(url, /air-quality-api\.open-meteo\.com.*current=us_aqi/)
       const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
       const longitudes = url.match(/longitude=([^&]*)/)[1].split(',')
-      assert.equal(latitudes.length, nodes)
-      assert.equal(longitudes.length, nodes)
+      assert.equal(latitudes.length, longitudes.length)
+      assert.ok(latitudes.length <= 350)
     }
     assert.equal(sent.length, 1)
     assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
     assert.equal(sent[0][1].field.values.length, 315)
-    assert.equal(sent[0][1].continental.values.length, 434)
+    assert.equal(sent[0][1].continental.values.length, 24 * 42)
     assert.equal(sent[0][1].home.aqi, 31)
   })
 

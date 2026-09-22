@@ -23,15 +23,18 @@ const CONUS_STRIDE_COL = 46
 const AQI_GRID_LAT_SPAN = 7
 const AQI_GRID_LON_SPAN = 10
 const AQI_GRID_STEP = 1
-/* Continental AQI window: fixed CONUS bounds at 2° steps
- * (14x31 = 434 locations, one request). Coarse context under the
- * regional detail — the wide field carries zoomed-out views the
- * same way the continental wind grid does. */
-const AQI_WIDE_LAT_NORTH = 50
-const AQI_WIDE_LAT_SOUTH = 24
-const AQI_WIDE_LON_WEST = -126
-const AQI_WIDE_LON_EAST = -66
+/* Continental AQI window: fixed North-America bounds at 2° steps
+ * (24x42 = 1008 locations in three chunked requests). Coarse
+ * context under the regional detail — full Canada/US/Mexico
+ * coverage so zoomed-out views show the continent, not a box. */
+const AQI_WIDE_LAT_NORTH = 60
+const AQI_WIDE_LAT_SOUTH = 14
+const AQI_WIDE_LON_WEST = -134
+const AQI_WIDE_LON_EAST = -52
 const AQI_WIDE_STEP = 2
+/* Max locations per multi-location request: keeps URLs (~3 KB)
+ * far under server limits. */
+const AQI_CHUNK_PAIRS = 350
 
 module.exports = NodeHelper.create({
   socketNotificationReceived: function (notification, payload) {
@@ -403,18 +406,41 @@ module.exports = NodeHelper.create({
     }
   },
 
-  /* One grid's multi-location request: a lat/lon pair per node,
-   * row-major to match mapAqiResponse indexing. Throws on HTTP
-   * errors so the caller reports AQI_FIELDS_ERROR. */
-  fetchAqiGrid: async function (params) {
-    const plat = []
-    const plon = []
+  /* Split grid pairs into request-sized chunks. Row-major order
+   * is preserved so mapAqiResponse indexing holds after the
+   * chunk responses are concatenated. Pure — unit-tested. */
+  aqiChunks: function (params, maxPairs = AQI_CHUNK_PAIRS) {
+    const pairs = []
     for (const la of params.lats) {
       for (const lo of params.lons) {
-        plat.push(la)
-        plon.push(lo)
+        pairs.push([la, lo])
       }
     }
+    const chunks = []
+    for (let i = 0; i < pairs.length; i += maxPairs) {
+      chunks.push(pairs.slice(i, i + maxPairs))
+    }
+    return chunks
+  },
+
+  /* One grid's multi-location requests: a lat/lon pair per node,
+   * chunked to stay under URL limits, fetched sequentially to
+   * stay under API rate limits (an hourly refresh can afford the
+   * few seconds). Throws on HTTP errors so the caller reports
+   * AQI_FIELDS_ERROR. */
+  fetchAqiGrid: async function (params) {
+    const chunks = this.aqiChunks(params)
+    const lists = []
+    for (const chunk of chunks) {
+      lists.push(await this.fetchAqiChunk(chunk))
+    }
+    return lists.flat()
+  },
+
+  /* A single chunk request. Throws on HTTP errors. */
+  fetchAqiChunk: async function (pairs) {
+    const plat = pairs.map(([la]) => la)
+    const plon = pairs.map(([, lo]) => lo)
     const url =
       `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${plat.join(',')}&longitude=${plon.join(',')}` +
       '&current=us_aqi'
