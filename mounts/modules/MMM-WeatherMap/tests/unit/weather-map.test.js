@@ -1688,6 +1688,82 @@ describe('aqiBounds', () => {
   })
 })
 
+describe('aqiBoundsLatLng', () => {
+  it('converts field geometry to a MapLibre [[sw], [ne]] bound', () => {
+    const field = { nx: 21, ny: 15, lat0: 47, lon0: -110, dLat: 1, dLon: 1, values: [] }
+    assert.deepEqual(def.aqiBoundsLatLng.call(ctx(), field), [
+      [-110.5, 32.5],
+      [-89.5, 47.5]
+    ])
+  })
+
+  it('matches the aqiBounds image corners', () => {
+    const field = { nx: 21, ny: 15, lat0: 47, lon0: -110, dLat: 1, dLon: 1, values: [] }
+    const c = ctx()
+    const corners = def.aqiBounds.call(c, field)
+    assert.deepEqual(def.aqiBoundsLatLng.call(c, field), [
+      [corners[0][0], corners[2][1]],
+      [corners[1][0], corners[0][1]]
+    ])
+  })
+})
+
+describe('defaultAqiBounds', () => {
+  it('centers the home rect on the configured point', () => {
+    assert.deepEqual(def.defaultAqiBounds.call(ctx(), 40, -100), [
+      [-110, 33],
+      [-90, 47]
+    ])
+  })
+})
+
+describe('aqiConstraintFor', () => {
+  const BOUNDS = [[-110, 33], [-90, 47]]
+
+  it('no-ops inside the window at zoom 5+', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 6, center: [-93, 41], bounds: BOUNDS }),
+      { type: 'none' }
+    )
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 5, center: [-110, 33], bounds: BOUNDS }),
+      { type: 'none' }
+    )
+  })
+
+  it('raises low zoom to 5 keeping the center', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 4, center: [-93, 41], bounds: BOUNDS }),
+      { type: 'correct', zoom: 5, center: [-93, 41] }
+    )
+  })
+
+  it('clamps an escaped center into the window', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 6, center: [-80, 60], bounds: BOUNDS }),
+      { type: 'correct', zoom: 6, center: [-90, 47] }
+    )
+  })
+
+  it('clears outside the aqi view regardless of camera', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'wind', zoom: 4, center: [0, 0], bounds: BOUNDS }),
+      { type: 'clear' }
+    )
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'precip', zoom: 6, center: [-93, 41], bounds: BOUNDS }),
+      { type: 'clear' }
+    )
+  })
+
+  it('no-ops without bounds to correct against', () => {
+    assert.deepEqual(
+      def.aqiConstraintFor.call(ctx(), { view: 'aqi', zoom: 4, center: [-93, 41], bounds: null }),
+      { type: 'none' }
+    )
+  })
+})
+
 describe('updateAqiImage', () => {
   const FIELD = { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30, 30, 30, 30] }
   const WIDE = { nx: 3, ny: 2, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [20, 20, 20, 20, 20, 20] }

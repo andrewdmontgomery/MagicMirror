@@ -5,7 +5,9 @@
  * extension point for future views: add the key here, a legend branch in
  * legendDiv(), a timeline branch in timelineDiv(), and a layer branch in
  * initMap()/restartAnimation(). The AQI view is static (no timeline) —
- * rebuildOverlays() skips its timeline chrome.
+ * rebuildOverlays() skips its timeline chrome. Entering the AQI view
+ * clamps the shared map to the regional window (minZoom 5 + maxBounds
+ * from the field geometry); leaving releases both, camera untouched.
  * View selection is manual for now (viewControl + WEATHERMAP_SET_VIEW);
  * a future auto-selector can drive the same setView() — e.g. default to
  * whichever of rain/AQI/wind is most relevant.
@@ -41,6 +43,16 @@ const WIND_COLOR_STOPS = [
   [0.55, [127, 212, 242]],
   [1, [232, 246, 253]]
 ]
+/* Minimum zoom inside the AQI view: the regional wash only covers
+ * its window at zoom 5 and up (the wash layer itself hides below 5),
+ * so the view clamp and the layer floor stay one constant. */
+const AQI_MIN_ZOOM = 5
+/* Pre-payload AQI rect spans (mirror the node_helper AQI_GRID_LAT /
+ * AQI_GRID_LON_SPAN): geometry is fixed for fixed config, so the
+ * default rect matches the field the first payload will describe —
+ * the exact bounds snap in with the payload, no refetch needed. */
+const AQI_DEFAULT_LAT_SPAN = 7
+const AQI_DEFAULT_LON_SPAN = 10
 /* US EPA AQI stops (AQI → RGB), mirroring .vector-legend-bar-aqi in
  * MMM-WeatherMap.css — keep the two in sync. */
 const AQI_COLOR_STOPS = [
@@ -304,11 +316,68 @@ Module.register('MMM-WeatherMap', {
     return !!(this.playing && this.playing[this.view])
   },
 
+  /* Constraint decision for the shared map camera, pure given
+   * {view, zoom, center, bounds}: inside the AQI window → no-op;
+   * low zoom and/or escaped center → the minimal correction; any
+   * other view → clear. The MapLibre calls themselves
+   * (setMinZoom/setMaxBounds/easeTo) stay untested glue, mirroring
+   * the particle-GL pattern. Tested. */
+  aqiConstraintFor: function ({ view, zoom, center, bounds }) {
+    if (view !== 'aqi' || !bounds) {
+      return view === 'aqi' ? { type: 'none' } : { type: 'clear' }
+    }
+    const [[west, south], [east, north]] = bounds
+    const fixedZoom = Math.max(zoom, AQI_MIN_ZOOM)
+    const fixedCenter = [
+      Math.min(Math.max(center[0], west), east),
+      Math.min(Math.max(center[1], south), north)
+    ]
+    if (fixedZoom === zoom && fixedCenter[0] === center[0] && fixedCenter[1] === center[1]) {
+      return { type: 'none' }
+    }
+    return { type: 'correct', zoom: fixedZoom, center: fixedCenter }
+  },
+
+  /* Bounds for the AQI clamp: the fetched field geometry when it has
+   * landed, else the home-centered default rect. */
+  aqiViewBounds: function () {
+    if (this.aqi && this.aqi.field) {
+      return this.aqiBoundsLatLng(this.aqi.field)
+    }
+    return this.defaultAqiBounds(this.config.lat, this.config.lon)
+  },
+
+  /* Clamp the shared map to the regional window. No camera move here —
+   * the entry glide corrects an escaped camera; these only prevent
+   * escape. Untested glue (no map under node --test). */
+  applyViewConstraints: function () {
+    if (!this.map) {
+      return
+    }
+    this.map.setMinZoom(AQI_MIN_ZOOM)
+    this.map.setMaxBounds(this.aqiViewBounds())
+  },
+
+  /* Release the AQI clamp — defaults are unconstrained, so clearing
+   * restores the other views' freedom. Never moves the camera. */
+  clearViewConstraints: function () {
+    if (!this.map) {
+      return
+    }
+    this.map.setMaxBounds(null)
+    this.map.setMinZoom(null)
+  },
+
   setView: function (view) {
     if (!VIEWS.includes(view) || view === this.view) {
       return false
     }
     this.view = view
+    if (view === 'aqi') {
+      this.applyViewConstraints()
+    } else {
+      this.clearViewConstraints()
+    }
     this.syncContentToView()
     if (typeof this.sendNotification === 'function') {
       this.sendNotification('WEATHERMAP_VIEW_CHANGED', { view })
@@ -882,6 +951,7 @@ Module.register('MMM-WeatherMap', {
         this.ensureParticleLayer()
       } else if (this.isAqiView()) {
         this.positionAqiCallout()
+        this.applyViewConstraints()
         this.ensureAqiLayer()
       } else {
         this.addRadarLayer()
@@ -1182,6 +1252,26 @@ Module.register('MMM-WeatherMap', {
     return [0, 1, 2].map((channel) => Math.round(lower[1][channel] + (upper[1][channel] - lower[1][channel]) * mix))
   },
 
+  /* MapLibre [[sw], [ne]] bound for a field: the same half-cell
+   * padded rect as aqiBounds, in [lng, lat] order for setMaxBounds.
+   * Pure — tested. */
+  aqiBoundsLatLng: function (field) {
+    const west = field.lon0 - field.dLon / 2
+    const east = field.lon0 + (field.nx - 1) * field.dLon + field.dLon / 2
+    const north = field.lat0 + field.dLat / 2
+    const south = field.lat0 - (field.ny - 1) * field.dLat - field.dLat / 2
+    return [[west, south], [east, north]]
+  },
+
+  /* Home-centered default rect (spans mirror the node_helper grid
+   * window). Pure — tested. */
+  defaultAqiBounds: function (lat, lon) {
+    return [
+      [lon - AQI_DEFAULT_LON_SPAN, lat - AQI_DEFAULT_LAT_SPAN],
+      [lon + AQI_DEFAULT_LON_SPAN, lat + AQI_DEFAULT_LAT_SPAN]
+    ]
+  },
+
   /* ImageSource coordinates for a field: half-cell padding around
    * the outer grid centers, row 0 at the north edge. Pure — tested. */
   aqiBounds: function (field) {
@@ -1253,7 +1343,7 @@ Module.register('MMM-WeatherMap', {
     }
     const layers = [
       { id: 'aqi-wash-wide', field: this.aqi.continental },
-      { id: 'aqi-wash', field: this.aqi.field, minzoom: 5 }
+      { id: 'aqi-wash', field: this.aqi.field, minzoom: AQI_MIN_ZOOM }
     ]
     layers.forEach(({ id, field, minzoom }) => {
       if (!field) {
