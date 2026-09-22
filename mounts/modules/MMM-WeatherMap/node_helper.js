@@ -403,6 +403,12 @@ module.exports = NodeHelper.create({
       this.sendSocketNotification('AQI_FIELDS_ERROR', {})
       return
     }
+    // Pace the continental prefetch behind the regional send: the two
+    // grids back-to-back burst ~665 locations in seconds, over the
+    // ~600/min free-tier budget, so the wide chunks 429. Regional is
+    // already delivered (badge in seconds); the wide context follows
+    // a gap later.
+    await this.waitMs(AQI_REQUEST_GAP_MS)
     try {
       const continentalList = await this.fetchAqiGrid(continental)
       const wide = this.mapAqiResponse(continentalList, continental, lat, lon)
@@ -496,13 +502,17 @@ module.exports = NodeHelper.create({
         const json = await response.json()
         return Array.isArray(json) ? json : [json]
       }
-      const retryAfter = Number(
+      const rawRetryAfter =
         response.headers && typeof response.headers.get === 'function'
           ? response.headers.get('retry-after')
-          : NaN
-      )
+          : null
+      // Missing/empty header must not parse as 0 (Number(null) === 0
+      // would retry immediately and burn the second attempt).
+      const retryAfter = rawRetryAfter === null || rawRetryAfter === undefined || rawRetryAfter === ''
+        ? NaN
+        : Number(rawRetryAfter)
       if (response.status === 429 && !retried) {
-        const delayMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : AQI_REQUEST_GAP_MS
+        const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : AQI_REQUEST_GAP_MS
         console.warn(`MMM-WeatherMap: AQI rate-limited, retrying in ${Math.round(delayMs / 1000)}s`)
         await this.waitMs(delayMs)
         continue

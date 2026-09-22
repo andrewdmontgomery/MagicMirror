@@ -41,7 +41,8 @@ afterEach(() => {
 })
 
 describe('fetchFrames', () => {
-  it('maps RainViewer past frames to host plus time/path pairs', async () => {    global.fetch = async (url) => {
+  it('maps RainViewer past frames to host plus time/path pairs', async () => {
+    global.fetch = async (url) => {
       fetchedUrls.push(url)
       return {
         ok: true,
@@ -533,8 +534,9 @@ describe('fetchAqi', () => {
     assert.equal(sent[1][1].field.values.length, 315)
     assert.equal(sent[1][1].continental.values.length, 24 * 42)
     assert.equal(sent[1][1].home.aqi, 31)
-    // Rate-limit gaps between the wide chunks only.
-    assert.deepEqual(waits, [60000, 60000])
+    // Rate-limit gaps: one between regional and continental, then
+    // between the wide chunks — startup never bursts over budget.
+    assert.deepEqual(waits, [60000, 60000, 60000])
   })
 
   it('sends nothing without coordinates', async () => {
@@ -629,11 +631,14 @@ describe('fetchAqiChunk 429 handling', () => {
   })
 
   it('throws after the retry also fails', async () => {
+    const waits = []
     const realWait = helper.waitMs
-    helper.waitMs = async () => {}
+    helper.waitMs = async (ms) => { waits.push(ms) }
     try {
       global.fetch = async () => ({ ok: false, status: 429, headers: { get: () => null } })
       await assert.rejects(helper.fetchAqiChunk([[40, -100]]), /429/)
+      // Missing Retry-After must fall back to the 60 s gap, never 0.
+      assert.deepEqual(waits, [60000])
     } finally {
       helper.waitMs = realWait
     }
