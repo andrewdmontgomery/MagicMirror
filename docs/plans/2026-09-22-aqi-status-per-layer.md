@@ -1,99 +1,51 @@
-# Per-Layer AQI Status + Fetch Hardening Implementation Plan
+# AQI Regional-Only Constraint + Fetch Hardening Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
-**Goal:** The status line under the map reports the state of the wash that is actually visible — regional or continental — instead of a single blended `aqi` feed.
+**Goal:** AQI view can never spend more than one 315-location regional fetch per refresh — enforced structurally by constraining the map to the regional window, deleting the continental path, and caching last-good fields.
 
-**Architecture:** Split `feeds.aqi` into regional + `feeds.aqiWide` (continental), add a pure zoom-driven selector (`z < 5` → wide, else regional), and refresh the line on zoom changes as well as fetches and view switches. Copy stays identical — only the source feed switches. Optionally cache last-good fields in the helper so fresh page loads don't re-burn the rate-limit budget.
+**Architecture:** On entering the AQI view, clamp the shared map to the regional rect (`minZoom 5` + `maxBounds` derived from the fetched field geometry) with a minimal-correction glide when the camera is outside it; release on exit and restore the previous view's camera. `node_helper` fetches regional only, serves fresh-cached payloads to new page loads with zero network, fails fast on daily-quota 429s, and logs spend + error bodies. No new dependencies, no `config.js` change.
 
-**Tech Stack:** Existing `MMM-WeatherMap.js` feed machinery (`markFeed` / `statusText` / `updateStatus`), `node_helper.js` AQI fetch paths, `node:test` suites. No new dependencies, no `config.js` change.
+**Tech Stack:** MapLibre `setMinZoom` / `setMaxBounds` / `easeTo`, existing `MMM-WeatherMap.js` view + feed machinery, `node_helper.js` AQI fetch paths, `node:test` suites.
 
 ---
 
 ## Background (facts the implementer needs)
 
-- Layers in `updateAqiImage` (`mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js`): `aqi-wash-wide` (continental, no floor, bottom) + `aqi-wash` (regional, `minzoom: 5`, top). Below zoom 5 only continental is visible; at zoom ≥ 5 regional dominates with continental as edge context.
-- Demand prefetch fires at zoom < 6 (`maybeFetchWide` on `moveend`, `wideFetchNeeded` — one level above the regional floor).
-- Current status machinery (branch `feature/aqi-view`): `this.feeds = { precip: {}, wind: {}, aqi: {} }`, `markFeed(view, outcome)` stamps `fetching` / `ready` (`updatedAt = Date.now()`) / `error` (`errorAt`), `statusText` renders the three states with `formatFrameTime`, `updateStatus()` reads `this.feeds[this.view]`, `attributionDiv` owns `statusEl`. In-place `textContent` writes only — never `updateDom` on refresh.
-- Current AQI wiring gap this plan fixes: `AQI_WIDE_RESULT` stamps the single `aqi` feed `ready`, and `AQI_WIDE_ERROR` is deliberately silent — so a failed continental fetch while zoomed out shows a stale regional timestamp for a layer with no data.
-- Rate-limit budget (verified live Sep 2026): ~600 locations/min on the keyless air-quality API. Regional = 315 locs (1 chunk), continental = 1008 locs (3× ≤350 chunks), 60 s gaps between chunks and between the grids (`AQI_REQUEST_GAP_MS`), 60 s fallback when `Retry-After` is missing. Startup therefore takes ~3.5 min to full continental; regional lands in seconds.
-- Base branch: implement on top of `feature/aqi-view` after it merges (or stacked on its tip) — the feed machinery it builds on lives there.
+- Regional window: ±7° lat / ±10° lon around home (constants `AQI_GRID_*` in `node_helper.js`). For the 420px map, visible longitude span = 420×360/(256×2^z): ~18.5° at z=5 vs the 20°-wide window, ~9.2° at z=6. Latitude behaves similarly near 45°. So **zoom ≥ 5 + pan clamped to the window keeps the regional field under the viewport** — and the regional wash layer already assumes this (`minzoom: 5` in `updateAqiImage`).
+- Current continental machinery to delete: `fetchAqiWide` / `maybeFetchWide` / `wideFetchNeeded` / `wideFetching` (frontend), `fetchAqiWide` + `aqiWideParams` (helper), `AQI_WIDE_RESULT` / `AQI_WIDE_ERROR` notifications, the second `AQI_FIELDS_RESULT` send, the `continental` member, the `aqi-wash-wide` layer, and the inter-grid pacing gap (`c09f8f9` — obsolete once there is no second grid). Branch history built lazy once (`695e910`) then prefetched (`eac47aa`); this restores demand-free regional-only, permanently.
+- With the wide layer gone, the per-layer status split is unnecessary: one feed, one layer, one status. The existing `feeds.aqi` machinery stands unchanged.
+- Quota math (proven Sep 2026 — 315-location probe on an idle budget returned `{"error":true,"reason":"Daily API request limit exceeded"}` while 1-location requests return 200): locations meter against the 10k/day free cap. After this plan: 4× 6 h refreshes × 315 = **1260/day steady state**; page loads cost 0 (cache); nothing else can spend air-quality quota.
+- Nothing else constrains the map today (verify: no `setMinZoom` / `setMaxBounds` calls) — defaults are unconstrained, so exit restores by clearing.
+- Base branch: stacked on `feature/aqi-view` tip; merges after it.
 
 ## Decisions
 
-1. **Selector threshold = zoom 5**, matching the regional layer's `minzoom` (the actual visibility boundary), not the prefetch threshold 6. The 5–6 band shows regional → reports regional even while a prefetch runs underneath (no flicker when continental lands).
-2. **No new copy.** Both feeds render through the same `statusText` strings (`Updating air quality…` / `Air quality updated {time}` / `Air quality unavailable — retrying`).
-3. **Wide errors surface only when wide is visible.** Stamping `aqiWide.errorAt` never clobbers the regional timestamp; zooming back in instantly recovers to good regional state.
-4. **Status refreshes on zoom, not just fetches.** `moveend` already drives `maybeFetchWide`; the same signal refreshes the line since the visible layer can change with no fetch and no `setView`.
-5. **Cache hardening (Phase 3) is conditional** — do it only if reload-driven 429s recur after Phase 1–2. It changes data-freshness semantics and needs its own TTL decision.
+1. **Constraint boundary = the fetched field geometry**, not duplicated constants: bounds from `this.aqi.field` (`lat0/lon0/dLat/dLon/nx/ny`, same source as `aqiBounds`). Pre-first-payload entry constrains to the home-centered default rect; exact bounds snap in with the payload (no refetch needed — geometry is fixed for fixed config).
+2. **Transition corrects minimally, and only when needed.** Entering AQI computes: `zoom = max(current, 5)`, center = current clamped into bounds. If nothing changes, no camera movement at all (common case: default zoom 6 at home). Else one `easeTo` (~800ms) under the view crossfade — a "glide home," not a jump.
+3. **Per-view camera memory.** `setView` stashes `{center, zoom}` of the outgoing view and restores it on return, so AQI is a detour, not a reset. Memory is best-effort (lost on reload — acceptable).
+4. **Cache TTL = 6 h, aligned to `aqiUpdateInterval`.** Anything the refresh accepts as fresh, a page load accepts. Single slot keyed by rounded lat/lon; coordinate change invalidates. CAMS updates every 12 h, so worst-case staleness matches what the mirror already accepts.
+5. **Quota-aware fail-fast.** A 429 whose body matches `/daily/i` throws immediately with the reason — no 60 s retry (a retry against a daily quota is pure spend). Per-minute 429s keep one 60 s retry. Error bodies (first ~200 chars) go into the throw and the helper error logs; the Sep-22 diagnosis took an hour because logs showed only `HTTP 429`.
+6. **Single-flight.** Concurrent `GET_AQI_FIELDS` (two tabs, double mounts) share one in-flight promise — N×315 becomes 1×315.
+7. **No multi-location probes against production.** Diagnosis uses 1-location requests or fixtures, minutes apart. (A 315-location probe during the Sep-22 incident likely spent quota itself.)
+8. **Spend logging.** Log locations-per-cycle on every AQI success path (regional-only has no success line today), so the next quota event is diagnosable from `docker compose logs` alone.
 
-## Phase 1 — Split the continental feed
+## Phase 1 — Constrain AQI to regional, delete the wide path
 
-### Task 1: Pure selector + sourced status text
-
-**Files:**
-- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`activeAqiFeed`, `updateStatus`)
-- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js`
-
-**Step 1: Write the failing tests**
-
-```js
-// zoom < 5 reports the wide feed, zoom >= 5 reports regional,
-// non-aqi views are untouched by the selector
-assert.equal(def.activeAqiFeed.call({ view: 'aqi', map: fakeMap(4) }), 'aqiWide')
-assert.equal(def.activeAqiFeed.call({ view: 'aqi', map: fakeMap(5) }), 'aqi')
-assert.equal(def.activeAqiFeed.call({ view: 'aqi', map: null }), 'aqi') // pre-map: regional default
-```
-
-**Step 2: Run test to verify it fails**
-
-Run: `npm run test:weather-map`
-Expected: FAIL (`activeAqiFeed is not a function`)
-
-**Step 3: Write minimal implementation**
-
-```js
-/* Which AQI feed is on screen: continental alone below zoom 5
- * (regional minzoom), regional otherwise. Pure given zoom. */
-activeAqiFeed: function () {
-  if (!this.isAqiView()) {
-    return 'aqi'
-  }
-  if (this.map && this.mapReady && typeof this.map.getZoom === 'function' && this.map.getZoom() < 5) {
-    return 'aqiWide'
-  }
-  return 'aqi'
-},
-```
-
-and `updateStatus` reads `this.feeds[this.view === 'aqi' ? this.activeAqiFeed() : this.view]`.
-
-**Step 4: Run test to verify it passes**
-
-Run: `npm run test:weather-map`
-Expected: PASS
-
-**Step 5: Commit**
-
-```bash
-git add mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js
-git commit -m "feat: zoom-driven AQI feed selector for the status line"
-```
-
-### Task 2: Wide feed wiring (fetching / ready / error)
+### Task 1: View constraints toggle (pure geometry + thin glue)
 
 **Files:**
-- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`getAqi`, `getAqiWide`, `socketNotificationReceived`, `start` feed init gains `aqiWide: {}`)
+- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`aqiBoundsLatLng` pure helper from field geometry, `applyViewConstraints` / `clearViewConstraints`, `setView` hooks, map `load` handler for boot-into-AQI)
 - Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js`
 
-**Step 1: Write the failing tests** — `getAqi` stamps both `aqi` and `aqiWide` fetching; second `AQI_FIELDS_RESULT` (with `.continental`) stamps `aqiWide` ready without touching `aqi.updatedAt`; `AQI_WIDE_RESULT` stamps `aqiWide` ready; `AQI_WIDE_ERROR` stamps `aqiWide` error and leaves `aqi` timestamps intact; zoomed-out `updateStatus` then shows `Air quality unavailable — retrying` while zoomed-in shows the regional time (use the `statusCtx` harness pattern already in `feed status wiring`).
+**Step 1: Write the failing tests** — bounds helper converts a synthetic field (`lat0/lon0/dLat/dLon/nx/ny`) to `[[south,west],[north,east]]`; constraint decision is pure given `{view, zoom, center, bounds}`: inside → no-op, zoom 4 → zoom 5 same center, center outside → clamped center, non-aqi → cleared. MapLibre calls themselves (`setMinZoom`/`setMaxBounds`/`easeTo`) stay untested glue, mirroring the particle-GL pattern.
 
 **Step 2: Run test to verify it fails**
 
 Run: `npm run test:weather-map`
 Expected: FAIL
 
-**Step 3: Write minimal implementation** — four `markFeed('aqiWide', …)` call sites mirroring the existing `aqi` ones; keep the `AQI_FIELDS_RESULT` regional-first send stamping only `aqi`.
+**Step 3: Write minimal implementation.**
 
 **Step 4: Run test to verify it passes**
 
@@ -104,25 +56,85 @@ Expected: PASS
 
 ```bash
 git add mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js
-git commit -m "feat: track continental AQI feed for the status line"
+git commit -m "feat: constrain AQI view to the regional window"
 ```
 
-### Task 3: Refresh on zoom
+### Task 2: Per-view camera memory + minimal-correction transition
 
 **Files:**
-- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (map `load` handler: `moveend` → `updateStatus`, next to the existing `maybeFetchWide` hook)
-- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js` only if a pure seam exists (e.g. assert `setView`-independent `updateStatus` picks the wide feed at zoom 4 via the Task 1 selector — no DOM stub expansion; MapLibre event wiring itself stays untested, mirroring the particle-GL pattern)
+- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`setView` stash/restore, entering-AQI correction ease)
+- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js` (stash on exit asserted via the pure decision helper from Task 1; `easeTo` invocation itself untested glue)
 
-**Step 1–4:** Test, run (FAIL), one-line hook, run (PASS).
+**Step 1–4:** Test, run (FAIL), implement, run (PASS).
 
 **Step 5: Commit**
 
 ```bash
 git add mounts/modules/MMM-WeatherMap/
-git commit -m "feat: refresh AQI status on zoom changes"
+git commit -m "feat: glide-and-return AQI camera transition"
 ```
 
-## Phase 2 — Verify the status split
+### Task 3: Delete the continental path
+
+**Files:**
+- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (remove `getAqiWide`, `maybeFetchWide`, `wideFetchNeeded`, `wideFetching`, `AQI_WIDE_*` branches, `continental` merge, `aqi-wash-wide` layer, `moveend → maybeFetchWide` hook; 6 h interval drops the `getAqiWide` conditional)
+- Modify: `mounts/modules/MMM-WeatherMap/node_helper.js` (remove `fetchAqiWide`, `aqiWideParams`, continental prefetch + inter-grid gap from `fetchAqi`; `fetchAqi` becomes regional-only, single `AQI_FIELDS_RESULT`)
+- Test: update `mounts/modules/MMM-WeatherMap/tests/unit/node-helper.test.js` (`fetchAqi` test: single send, `waits` → `[]`) and `weather-map.test.js` (drop wide-branch wiring tests); delete the `fetchAqiWide` describe block
+
+**Step 1:** Update tests to the regional-only shape; run, expect FAIL. **Step 2:** Delete implementation; run, expect PASS.
+
+**Step 3: Commit**
+
+```bash
+git add mounts/modules/MMM-WeatherMap/
+git commit -m "feat: remove continental AQI path"
+```
+
+## Phase 2 — Cache + fail-fast + spend logging (node)
+
+### Task 4: Single-slot cache + single-flight
+
+**Files:**
+- Modify: `mounts/modules/MMM-WeatherMap/node_helper.js` (`this.aqiCache = { lat, lon, fetchedAt, field, home }`, TTL constant 6 h with comment linking `aqiUpdateInterval`; in-flight promise shared by concurrent `GET_AQI_FIELDS`)
+- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/node-helper.test.js` (+ `helper.aqiCache = null` in the top `beforeEach` — the helper object is a module singleton shared across tests)
+
+**Step 1: Write the failing tests** — fresh cache + same coords → zero `fetch` calls, cached `AQI_FIELDS_RESULT` re-sent with identical shape; stale cache → network as today; changed coords → network; two concurrent `fetchAqi` calls → one `fetch` invocation.
+
+**Step 2: Run test to verify it fails**
+
+Run: `npm run test:weather-map`
+Expected: FAIL
+
+**Step 3: Write minimal implementation.**
+
+**Step 4: Run test to verify it passes**
+
+Run: `npm run test:weather-map`
+Expected: PASS
+
+**Step 5: Commit**
+
+```bash
+git add mounts/modules/MMM-WeatherMap/node_helper.js mounts/modules/MMM-WeatherMap/tests/
+git commit -m "feat: serve fresh-cached AQI fields with single-flight"
+```
+
+### Task 5: Quota-aware fail-fast + error bodies + spend log
+
+**Files:**
+- Modify: `mounts/modules/MMM-WeatherMap/node_helper.js` (`fetchAqiChunk`: read body on 429 — guarded `typeof response.text === 'function'` since unit stubs omit it — fail fast without retry when `/daily/i` matches, include first ~200 chars in throw + warn; `fetchAqi` error log includes it; success path logs `AQI fields {n} nodes`)
+- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/node-helper.test.js` (daily-body 429 → rejects with reason, `waits` empty; per-minute 429 without body → still one 60 s retry)
+
+**Step 1–4:** Test, run (FAIL), implement, run (PASS).
+
+**Step 5: Commit**
+
+```bash
+git add mounts/modules/MMM-WeatherMap/
+git commit -m "feat: fail fast on daily AQI quota with reason"
+```
+
+## Phase 3 — Verify
 
 **Step 1:** Full suite + lint green:
 Run: `npm test && npm run lint`
@@ -131,32 +143,17 @@ Run: `npm test && npm run lint`
 Run: `docker compose restart magicmirror`, then `sleep 6 && docker compose logs --tail=50 magicmirror`
 Expect: config clean, all helpers loaded, no `[ERROR]`.
 
-**Step 3:** Live zoom protocol at `http://localhost:8080` (hard refresh — module JS keeps its URL). Cooldown warning: leave the mirror alone 5 min before loading (each load re-fires the prefetch; reload-spam re-burns the ~600/min budget and 429s everything). Then exactly one load, AQI view, and: zoom ≥ 6 → regional timestamp after ~seconds; zoom to 4 → `Updating air quality…` until continental lands (~3 min), then its timestamp; block continental (or catch a 429) at zoom 4 → `Air quality unavailable — retrying`; zoom back to 7 → regional timestamp instantly, no flicker. Frontend-only states — browser console is the source of truth, container logs can't confirm them.
+**Step 3:** Live protocol at `http://localhost:8080` — after a UTC-midnight quota reset, exactly one hard-refresh load, then: AQI view shows wash + badge + `Air quality updated …` within ~1 min (regional is one request now); zoom controls stop at 5 in AQI view and pan clamps near the window; entering AQI from a zoomed-out wind view glides home; exiting restores the previous camera; a second reload within 6 h issues zero air-quality requests (watch `docker compose logs` for absence of AQI fetch lines). Browser console is the source of truth for frontend states; container logs for spend.
 
-## Phase 3 — Fetch hardening (REQUIRED — daily quota, proven Sep 2026)
+## Open questions (not tasks)
 
-**Problem, now quantified:** a 315-location probe on a 23-minute-idle budget returned `HTTP 429 {"error":true,"reason":"Daily API request limit exceeded. Please try again tomorrow."}` while 1-location requests return 200. Locations meter against the 10k/day free cap: one full prefetch = 315 regional + 1008 continental = **1323/day per page load**. Steady state alone (4× 6 h refreshes) = 5292/day; every browser reload adds another 1323. The Sep-22 reload-and-retry debugging exhausted the quota — no code change restores data until the UTC-midnight reset.
-
-**Files:**
-- Modify: `mounts/modules/MMM-WeatherMap/node_helper.js` (cache last-good `{ field, continental, home, fetchedAt }`; `fetchAqi`/`fetchAqiWide` consult it)
-- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/node-helper.test.js`
-
-**Shape (do all three — each attacks the 1323/load cost):**
-1. **Continental goes demand-only (revert prefetch).** `fetchAqi` fetches regional only (315/refresh → 1260/day steady state); continental loads solely via `fetchAqiWide` on zoom-out demand. This un-sends the second `AQI_FIELDS_RESULT` — update the Task-2 wiring and the `fetchAqi` test (`waits` → `[]`, single send) accordingly. Branch history already built lazy once (`695e910`); this restores that shape with the status split on top.
-2. **Node-side cache for fresh page loads.** Cache last-good `{ field, continental, home, fetchedAt }`; on `GET_AQI_FIELDS` with fresh cache, re-send cached payload shapes immediately with zero network. Suggested TTL 1 h (well under the 6 h refresh, over the ~1 min regional fetch).
-3. **Log the error body on failed chunks.** The 429 body held the entire diagnosis (`Daily API request limit exceeded`) while the logs showed only `HTTP 429`. Include the first ~200 chars of the response text in the `fetchAqiChunk` throw and the `fetchAqi`/`fetchAqiWide` error logs — next quota/rate event is then diagnosable from `docker compose logs` alone.
-
-**Step 1:** Failing tests — fresh cache → zero `fetch` calls, both sends emitted; stale cache → network as today. **Step 2:** Run, FAIL. **Step 3:** Implement. **Step 4:** Run, PASS. **Step 5:** Commit (`feat: serve fresh-cached AQI fields to new page loads`).
-
-## Open questions (not tasks — resolve before / during implementation)
-
-1. **`WIND_SUMMARY_RESULT` has no error path** (`fetchWind` catch is log-only, unlike `WIND_FIELDS_ERROR`). Wind status can stick on `Updating wind…` if the summary fetch fails but fields succeed later it self-heals; if both fail only fields report. Decide: add `WIND_SUMMARY_ERROR` send, or document as accepted gap. One-line helper change + wiring test if accepted.
-2. **Prefetch vs lazy continental** was already litigated (lazy → prefetch, branch history `695e910` → `eac47aa`): prefetch stays. Do not relitigate in this feature.
-3. **Phase 3 TTL** — 1 h suggested; must stay well under the 6 h refresh interval and over the ~3.5 min full-prefetch duration.
+1. **`WIND_SUMMARY_RESULT` has no error path** (`fetchWind` catch is log-only). Accepted gap for now; revisit if wind status ever sticks on `Updating wind…`.
+2. **Regional grid density** (315 locs @ 1°) is the remaining spend lever if quota still binds (e.g. 2° ≈ 88 locs) — costs wash detail; fallback only.
 
 ## Merge criteria
 
 - `npm test` + `npm run lint` green (CI gates PRs: `test` / `lint` / `actionlint`).
 - mm-verify restart clean.
-- Live zoom protocol (Phase 2, Step 3) observed once by a human, including the wide-error-at-zoom-4 state if obtainable (a 429 during the cooldown window counts — do not manufacture failures).
+- Live protocol (Phase 3, Step 3) observed once by a human, post-quota-reset.
+- Quota math holds: steady state ≤ ~1.3k/day with headroom for reloads.
 - This plan's branch merges after `feature/aqi-view`.
