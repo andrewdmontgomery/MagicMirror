@@ -23,7 +23,7 @@
 
 1. **Constraint boundary = the fetched field geometry**, not duplicated constants: bounds from `this.aqi.field` (`lat0/lon0/dLat/dLon/nx/ny`, same source as `aqiBounds`). Pre-first-payload entry constrains to the home-centered default rect; exact bounds snap in with the payload (no refetch needed — geometry is fixed for fixed config).
 2. **Transition corrects minimally, and only when needed.** Entering AQI computes: `zoom = max(current, 5)`, center = current clamped into bounds. If nothing changes, no camera movement at all (common case: default zoom 6 at home). Else one `easeTo` (~800ms) under the view crossfade — a "glide home," not a jump.
-3. **Per-view camera memory.** `setView` stashes `{center, zoom}` of the outgoing view and restores it on return, so AQI is a detour, not a reset. Memory is best-effort (lost on reload — acceptable).
+3. **No motion on exit, ever.** Leaving AQI releases the constraints and leaves the camera exactly where it is — the map stays where you left it, and the other views' freedom resumes from there. View switches must never fling the camera unprompted; the only permitted camera motion in the whole design is the entering-AQI correction glide (Decision 2), which physics requires.
 4. **Cache TTL = 6 h, aligned to `aqiUpdateInterval`.** Anything the refresh accepts as fresh, a page load accepts. Single slot keyed by rounded lat/lon; coordinate change invalidates. CAMS updates every 12 h, so worst-case staleness matches what the mirror already accepts.
 5. **Quota-aware fail-fast.** A 429 whose body matches `/daily/i` throws immediately with the reason — no 60 s retry (a retry against a daily quota is pure spend). Per-minute 429s keep one 60 s retry. Error bodies (first ~200 chars) go into the throw and the helper error logs; the Sep-22 diagnosis took an hour because logs showed only `HTTP 429`.
 6. **Single-flight.** Concurrent `GET_AQI_FIELDS` (two tabs, double mounts) share one in-flight promise — N×315 becomes 1×315.
@@ -59,11 +59,11 @@ git add mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js mounts/modules/MMM-Weath
 git commit -m "feat: constrain AQI view to the regional window"
 ```
 
-### Task 2: Per-view camera memory + minimal-correction transition
+### Task 2: Entering glide, motionless exit
 
 **Files:**
-- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`setView` stash/restore, entering-AQI correction ease)
-- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js` (stash on exit asserted via the pure decision helper from Task 1; `easeTo` invocation itself untested glue)
+- Modify: `mounts/modules/MMM-WeatherMap/MMM-WeatherMap.js` (`setView`: entering-AQI correction ease; leaving AQI clears constraints with no camera call)
+- Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/weather-map.test.js` (decision helper from Task 1 drives both: exit always yields "no camera call" regardless of current camera; entry cases as in Task 1; `easeTo`/`setMaxBounds(null)` invocations themselves untested glue)
 
 **Step 1–4:** Test, run (FAIL), implement, run (PASS).
 
@@ -71,7 +71,7 @@ git commit -m "feat: constrain AQI view to the regional window"
 
 ```bash
 git add mounts/modules/MMM-WeatherMap/
-git commit -m "feat: glide-and-return AQI camera transition"
+git commit -m "feat: glide into AQI bounds, motionless exit"
 ```
 
 ### Task 3: Delete the continental path
@@ -143,7 +143,7 @@ Run: `npm test && npm run lint`
 Run: `docker compose restart magicmirror`, then `sleep 6 && docker compose logs --tail=50 magicmirror`
 Expect: config clean, all helpers loaded, no `[ERROR]`.
 
-**Step 3:** Live protocol at `http://localhost:8080` — after a UTC-midnight quota reset, exactly one hard-refresh load, then: AQI view shows wash + badge + `Air quality updated …` within ~1 min (regional is one request now); zoom controls stop at 5 in AQI view and pan clamps near the window; entering AQI from a zoomed-out wind view glides home; exiting restores the previous camera; a second reload within 6 h issues zero air-quality requests (watch `docker compose logs` for absence of AQI fetch lines). Browser console is the source of truth for frontend states; container logs for spend.
+**Step 3:** Live protocol at `http://localhost:8080` — after a UTC-midnight quota reset, exactly one hard-refresh load, then: AQI view shows wash + badge + `Air quality updated …` within ~1 min (regional is one request now); zoom controls stop at 5 in AQI view and pan clamps near the window; entering AQI from a zoomed-out wind view glides home once; exiting AQI moves nothing — the camera sits exactly where the glide (or the user) left it and wind/precip resume from there; a second reload within 6 h issues zero air-quality requests (watch `docker compose logs` for absence of AQI fetch lines). Browser console is the source of truth for frontend states; container logs for spend.
 
 ## Open questions (not tasks)
 
