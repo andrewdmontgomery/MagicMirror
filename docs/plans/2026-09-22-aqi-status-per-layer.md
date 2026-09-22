@@ -133,15 +133,18 @@ Expect: config clean, all helpers loaded, no `[ERROR]`.
 
 **Step 3:** Live zoom protocol at `http://localhost:8080` (hard refresh — module JS keeps its URL). Cooldown warning: leave the mirror alone 5 min before loading (each load re-fires the prefetch; reload-spam re-burns the ~600/min budget and 429s everything). Then exactly one load, AQI view, and: zoom ≥ 6 → regional timestamp after ~seconds; zoom to 4 → `Updating air quality…` until continental lands (~3 min), then its timestamp; block continental (or catch a 429) at zoom 4 → `Air quality unavailable — retrying`; zoom back to 7 → regional timestamp instantly, no flicker. Frontend-only states — browser console is the source of truth, container logs can't confirm them.
 
-## Phase 3 — Node-side cache (CONDITIONAL, only if reload-driven 429s recur)
+## Phase 3 — Fetch hardening (REQUIRED — daily quota, proven Sep 2026)
 
-**Problem:** every page load re-fires the full prefetch even when fields fetched minutes ago are still fresh (CAMS updates every 12 h, refresh interval is 6 h). Active watching = reload loop = permanent 429s.
+**Problem, now quantified:** a 315-location probe on a 23-minute-idle budget returned `HTTP 429 {"error":true,"reason":"Daily API request limit exceeded. Please try again tomorrow."}` while 1-location requests return 200. Locations meter against the 10k/day free cap: one full prefetch = 315 regional + 1008 continental = **1323/day per page load**. Steady state alone (4× 6 h refreshes) = 5292/day; every browser reload adds another 1323. The Sep-22 reload-and-retry debugging exhausted the quota — no code change restores data until the UTC-midnight reset.
 
 **Files:**
 - Modify: `mounts/modules/MMM-WeatherMap/node_helper.js` (cache last-good `{ field, continental, home, fetchedAt }`; `fetchAqi`/`fetchAqiWide` consult it)
 - Test: extend `mounts/modules/MMM-WeatherMap/tests/unit/node-helper.test.js`
 
-**Shape (decide TTL at implementation time, suggest 1 h):** on `GET_AQI_FIELDS`, if cache is fresh, re-send the cached payloads immediately (same notification shapes, so the frontend is untouched) and skip the network; else fetch as today and refresh the cache. Same for `GET_AQI_WIDE`.
+**Shape (do all three — each attacks the 1323/load cost):**
+1. **Continental goes demand-only (revert prefetch).** `fetchAqi` fetches regional only (315/refresh → 1260/day steady state); continental loads solely via `fetchAqiWide` on zoom-out demand. This un-sends the second `AQI_FIELDS_RESULT` — update the Task-2 wiring and the `fetchAqi` test (`waits` → `[]`, single send) accordingly. Branch history already built lazy once (`695e910`); this restores that shape with the status split on top.
+2. **Node-side cache for fresh page loads.** Cache last-good `{ field, continental, home, fetchedAt }`; on `GET_AQI_FIELDS` with fresh cache, re-send cached payload shapes immediately with zero network. Suggested TTL 1 h (well under the 6 h refresh, over the ~1 min regional fetch).
+3. **Log the error body on failed chunks.** The 429 body held the entire diagnosis (`Daily API request limit exceeded`) while the logs showed only `HTTP 429`. Include the first ~200 chars of the response text in the `fetchAqiChunk` throw and the `fetchAqi`/`fetchAqiWide` error logs — next quota/rate event is then diagnosable from `docker compose logs` alone.
 
 **Step 1:** Failing tests — fresh cache → zero `fetch` calls, both sends emitted; stale cache → network as today. **Step 2:** Run, FAIL. **Step 3:** Implement. **Step 4:** Run, PASS. **Step 5:** Commit (`feat: serve fresh-cached AQI fields to new page loads`).
 
