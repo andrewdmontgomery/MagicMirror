@@ -95,9 +95,11 @@ Module.register('MMM-WeatherMap', {
     /* HRRR gridded field refresh — the model runs hourly but the
      * field barely changes at mirror scale. */
     windFieldUpdateInterval: 6 * 60 * 60 * 1000,
-    /* CAMS AQI refresh — the global model updates every 12h, so
-     * hourly polling is plenty. */
-    aqiUpdateInterval: 60 * 60 * 1000,
+    /* CAMS AQI refresh — the global model updates every 12h, and
+     * the free tier caps at 10k calls/day (multi-location grids
+     * may meter per location: 1323 nodes/refresh), so 6h polling
+     * stays fresh with wide margin. */
+    aqiUpdateInterval: 6 * 60 * 60 * 1000,
     windHoursPast: 4,
     windHoursFuture: 12
   },
