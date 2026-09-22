@@ -35,6 +35,10 @@ const AQI_WIDE_STEP = 2
 /* Max locations per multi-location request: keeps URLs (~3 KB)
  * far under server limits. */
 const AQI_CHUNK_PAIRS = 350
+/* Gap between AQI requests: multi-location metering appears to
+ * count locations against the 600/min free tier, so ~350 nodes
+ * per minute stays clear. Overridable in tests. */
+const AQI_REQUEST_GAP_MS = 60000
 
 module.exports = NodeHelper.create({
   socketNotificationReceived: function (notification, payload) {
@@ -374,21 +378,28 @@ module.exports = NodeHelper.create({
 
   /* AQI fields: current US-AQI on the regional grid around the
    * requested point plus the continental context grid (one
-   * multi-location CAMS request each, keyless). Emits
-   * AQI_FIELDS_RESULT with both fields plus the bilinear home
-   * value the badge reads; AQI_FIELDS_ERROR on any failure. */
+   * multi-location CAMS request each, keyless). Sends the regional
+   * payload first (badge in seconds), then the full payload when
+   * the wide grid lands; AQI_FIELDS_ERROR only when regional
+   * fails. A wide failure keeps regional standing. */
   fetchAqi: async function ({ lat, lon } = {}) {
     if (lat === undefined || lon === undefined) {
       return
     }
+    const regional = this.aqiGridParams(lat, lon)
+    const continental = this.aqiWideParams()
+    let mapped
     try {
-      const regional = this.aqiGridParams(lat, lon)
-      const continental = this.aqiWideParams()
-      const [regionalList, continentalList] = await Promise.all([
-        this.fetchAqiGrid(regional),
-        this.fetchAqiGrid(continental)
-      ])
-      const mapped = this.mapAqiResponse(regionalList, regional, lat, lon)
+      const regionalList = await this.fetchAqiGrid(regional)
+      mapped = this.mapAqiResponse(regionalList, regional, lat, lon)
+      this.sendSocketNotification('AQI_FIELDS_RESULT', { field: mapped.field, home: mapped.home })
+    } catch (error) {
+      console.error('MMM-WeatherMap: failed to fetch AQI fields', error.message || error)
+      this.sendSocketNotification('AQI_FIELDS_ERROR', {})
+      return
+    }
+    try {
+      const continentalList = await this.fetchAqiGrid(continental)
       const wide = this.mapAqiResponse(continentalList, continental, lat, lon)
       const home = mapped.home.aqi === null ? wide.home : mapped.home
       console.log(
@@ -401,9 +412,15 @@ module.exports = NodeHelper.create({
         home
       })
     } catch (error) {
-      console.error('MMM-WeatherMap: failed to fetch AQI fields', error.message || error)
-      this.sendSocketNotification('AQI_FIELDS_ERROR', {})
+      console.error('MMM-WeatherMap: wide AQI grid failed, keeping regional', error.message || error)
     }
+  },
+
+  /* Delay helper (overridden with a recorder in tests). */
+  waitMs: function (ms) {
+    return new Promise((resolve) => {
+      setTimeout(resolve, ms)
+    })
   },
 
   /* Split grid pairs into request-sized chunks. Row-major order
@@ -424,14 +441,16 @@ module.exports = NodeHelper.create({
   },
 
   /* One grid's multi-location requests: a lat/lon pair per node,
-   * chunked to stay under URL limits, fetched sequentially to
-   * stay under API rate limits (an hourly refresh can afford the
-   * few seconds). Throws on HTTP errors so the caller reports
-   * AQI_FIELDS_ERROR. */
+   * chunked to stay under URL limits with rate-limit gaps between
+   * chunks (the first fires immediately). Throws on HTTP errors
+   * so the caller reports AQI_FIELDS_ERROR. */
   fetchAqiGrid: async function (params) {
     const chunks = this.aqiChunks(params)
     const lists = []
-    for (const chunk of chunks) {
+    for (const [index, chunk] of chunks.entries()) {
+      if (index > 0) {
+        await this.waitMs(AQI_REQUEST_GAP_MS)
+      }
       lists.push(await this.fetchAqiChunk(chunk))
     }
     return lists.flat()
