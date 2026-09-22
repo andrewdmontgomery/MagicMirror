@@ -128,6 +128,8 @@ Module.register('MMM-WeatherMap', {
     this.view = VIEWS.includes(this.config.defaultView) ? this.config.defaultView : 'wind'
     this.aqi = null
     this.wideFetching = false
+    this.feeds = { precip: {}, wind: {}, aqi: {} }
+    this.statusEl = null
     this.wind = null
     this.windIndex = 0
     this.windFields = []
@@ -186,10 +188,12 @@ Module.register('MMM-WeatherMap', {
   },
 
   getFrames: function () {
+    this.markFeed('precip', 'fetching')
     this.sendSocketNotification('GET_VECTOR_FRAMES', {})
   },
 
   getWind: function () {
+    this.markFeed('wind', 'fetching')
     this.sendSocketNotification('GET_WIND_SUMMARY', {
       lat: this.config.lat,
       lon: this.config.lon,
@@ -201,6 +205,7 @@ Module.register('MMM-WeatherMap', {
    * window is fixed (no pan-refetch): ±7° lat / ±10° lon covers
    * plausible pans at the mirror's zooms. */
   getAqi: function () {
+    this.markFeed('aqi', 'fetching')
     this.sendSocketNotification('GET_AQI_FIELDS', {
       lat: this.config.lat,
       lon: this.config.lon
@@ -244,6 +249,7 @@ Module.register('MMM-WeatherMap', {
       lon = this.config.lon
     }
     this.fieldsFetching = true
+    this.markFeed('wind', 'fetching')
     this.sendSocketNotification('GET_WIND_FIELDS', { lat, lon })
   },
 
@@ -313,6 +319,7 @@ Module.register('MMM-WeatherMap', {
     if (this.mapDiv) {
       this.rebuildOverlays()
     }
+    this.updateStatus()
     return true
   },
 
@@ -592,6 +599,7 @@ Module.register('MMM-WeatherMap', {
       if (payload && Array.isArray(payload.fields) && payload.fields.length > 0) {
         this.windFields = payload.fields
         this.windIndex = this.defaultWindIndex()
+        this.markFeed('wind', 'ready')
         // In-place refresh (badge/timeline/layers follow via
         // the animation restart) — never updateDom: the module
         // fade would flash the whole view every data refresh.
@@ -599,15 +607,18 @@ Module.register('MMM-WeatherMap', {
       }
     } else if (notification === 'WIND_FIELDS_ERROR') {
       this.fieldsFetching = false
+      this.markFeed('wind', 'error')
     } else if (notification === 'WIND_SUMMARY_RESULT') {
       if (payload && payload.hourly) {
         this.wind = payload
         this.windIndex = this.defaultWindIndex()
+        this.markFeed('wind', 'ready')
         this.syncContentToView()
       }
     } else if (notification === 'AQI_FIELDS_RESULT') {
       if (payload && payload.field) {
         this.aqi = payload
+        this.markFeed('aqi', 'ready')
         // In-place refresh (badge plus layer follow) — never
         // updateDom: the module fade would flash the whole view
         // every data refresh.
@@ -622,12 +633,14 @@ Module.register('MMM-WeatherMap', {
         }
       }
     } else if (notification === 'AQI_FIELDS_ERROR') {
+      this.markFeed('aqi', 'error')
       // Keep the previous field (if any) — the next refresh or
       // page load retries.
     } else if (notification === 'AQI_WIDE_RESULT') {
       this.wideFetching = false
       if (payload && payload.continental && this.aqi) {
         this.aqi.continental = payload.continental
+        this.markFeed('aqi', 'ready')
         this.updateAqiImage()
       }
     } else if (notification === 'AQI_WIDE_ERROR') {
@@ -643,8 +656,11 @@ Module.register('MMM-WeatherMap', {
         }
         this.frames = payload
         this.frameIndex = 0
+        this.markFeed('precip', 'ready')
         this.restartAnimation()
       }
+    } else if (notification === 'VECTOR_FRAMES_ERROR') {
+      this.markFeed('precip', 'error')
     }
   },
 
@@ -715,6 +731,7 @@ Module.register('MMM-WeatherMap', {
       this.rebuildOverlays()
       wrapper.appendChild(this.mapDiv)
       wrapper.appendChild(this.attributionDiv())
+      this.updateStatus()
       setTimeout(() => {
         if (!this.map) {
           this.renderMapView(this.mapDiv)
@@ -735,6 +752,7 @@ Module.register('MMM-WeatherMap', {
     this.mapDiv = mapDiv
     this.rebuildOverlays()
     wrapper.appendChild(this.attributionDiv())
+    this.updateStatus()
 
     // Fresh map only: init after insert, when the new container
     // has dimensions.
@@ -1316,15 +1334,72 @@ Module.register('MMM-WeatherMap', {
     }
   },
 
-  /* Static attribution caption (CARTO/OSM terms require it visible).
-   * Replaces the stock toggle: dimmer, smaller, and below the map. */
+  /* Record a feed outcome for the status line. Pure-ish (clock
+   * read on ready) — tested. */
+  markFeed: function (view, outcome) {
+    this.feeds = this.feeds || { precip: {}, wind: {}, aqi: {} }
+    const feed = this.feeds[view] || (this.feeds[view] = {})
+    if (outcome === 'fetching') {
+      feed.fetching = true
+      feed.errorAt = null
+    } else if (outcome === 'ready') {
+      feed.fetching = false
+      feed.updatedAt = Date.now()
+      feed.errorAt = null
+    } else if (outcome === 'error') {
+      feed.fetching = false
+      feed.errorAt = Date.now()
+    }
+    this.updateStatus()
+  },
+
+  /* Status line text for a view from its feed snapshot: updating
+   * before the first payload, receipt time once data lands,
+   * unavailable on failure. Pure — tested. */
+  statusText: function (view, feed) {
+    const f = feed || {}
+    const label = { precip: 'Radar', wind: 'Wind', aqi: 'Air quality' }[view] || 'Map'
+    const lower = { precip: 'radar', wind: 'wind', aqi: 'air quality' }[view] || 'map'
+    if (!f.fetching && f.errorAt) {
+      return `${label} unavailable — retrying`
+    }
+    if (f.updatedAt) {
+      return `${label} updated ${this.formatFrameTime(Math.floor(f.updatedAt / 1000))}`
+    }
+    return `Updating ${lower}…`
+  },
+
+  /* Write the status cell. No-op before the attribution row exists. */
+  setStatus: function (text) {
+    if (this.statusEl) {
+      this.statusEl.textContent = text
+    }
+  },
+
+  /* Refresh the status line for the active view. */
+  updateStatus: function () {
+    if (!this.statusEl) {
+      return
+    }
+    this.setStatus(this.statusText(this.view, this.feeds && this.feeds[this.view]))
+  },
+
+  /* Caption row under the map: transient feed status on the
+   * left, CARTO/OSM attribution on the right. */
   attributionDiv: function () {
-    const attrib = document.createElement('div')
-    attrib.className = 'vector-attrib light'
-    attrib.innerHTML =
+    const row = document.createElement('div')
+    row.className = 'vector-attrib'
+    const status = document.createElement('span')
+    status.className = 'vector-status light'
+    row.appendChild(status)
+    this.statusEl = status
+    const links = document.createElement('span')
+    links.className = 'vector-attrib-links light'
+    links.innerHTML =
       '© <a href="https://carto.com/attribution" target="_blank">CARTO</a> ' +
       '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributors'
-    return attrib
+    row.appendChild(links)
+    return row
   },
 
   positions: function () {

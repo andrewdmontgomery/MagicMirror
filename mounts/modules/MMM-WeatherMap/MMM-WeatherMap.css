@@ -297,12 +297,27 @@
 	color: #5ac8fa;
 }
 
-/* Attribution caption: dim and small under the map. */
+/* Attribution caption: dim and small under the map, feed status
+ * on the left and CARTO/OSM links on the right. */
 .vector-attrib {
-	text-align: right;
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 8px;
 	font-size: 11px;
 	color: #777;
 	margin-top: 4px;
+}
+
+.vector-status {
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.vector-attrib-links {
+	text-align: right;
+	white-space: nowrap;
 }
 
 .vector-attrib a {

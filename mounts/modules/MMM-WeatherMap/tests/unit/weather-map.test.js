@@ -2079,3 +2079,65 @@ describe('aqi chrome', () => {
     assert.equal(c.frameIndex, 2)
   })
 })
+
+describe('statusText', () => {
+  function text (view, feed) {
+    return def.statusText.call(ctx(), view, feed)
+  }
+
+  it('reads updating before the first payload', () => {
+    assert.equal(text('aqi', {}), 'Updating air quality…')
+    assert.equal(text('aqi', { fetching: true }), 'Updating air quality…')
+    assert.equal(text('precip', {}), 'Updating radar…')
+    assert.equal(text('wind', {}), 'Updating wind…')
+  })
+
+  it('reads the receipt time once data lands', () => {
+    assert.match(text('aqi', { updatedAt: 1_800_000_000 }), /^Air quality updated \d{1,2}:\d{2} (AM|PM)$/)
+    assert.match(text('wind', { updatedAt: 1_800_000_000 }), /^Wind updated \d{1,2}:\d{2} (AM|PM)$/)
+  })
+
+  it('reads unavailable on failure and clears on the next request', () => {
+    const c = ctx({ feeds: { aqi: {} } })
+    def.markFeed.call(c, 'aqi', 'error')
+    assert.equal(def.statusText.call(c, 'aqi', c.feeds.aqi), 'Air quality unavailable — retrying')
+    def.markFeed.call(c, 'aqi', 'fetching')
+    assert.equal(def.statusText.call(c, 'aqi', c.feeds.aqi), 'Updating air quality…')
+    def.markFeed.call(c, 'aqi', 'ready')
+    assert.match(def.statusText.call(c, 'aqi', c.feeds.aqi), /^Air quality updated /)
+  })
+})
+
+describe('feed status wiring', () => {
+  function statusCtx (overrides = {}) {
+    const shown = []
+    const base = ctx({
+      view: 'aqi',
+      feeds: { precip: {}, wind: {}, aqi: {} },
+      statusEl: { set textContent (v) { shown.push(v) }, get textContent () { return undefined } },
+      sendSocketNotification: () => {},
+      ...overrides
+    })
+    for (const fn of ['markFeed', 'statusText', 'setStatus', 'updateStatus', 'formatFrameTime']) {
+      base[fn] = (...args) => def[fn].call(base, ...args)
+    }
+    return { c: base, shown }
+  }
+
+  it('stamps ready on field delivery and shows it', () => {
+    const { c, shown } = statusCtx({ aqi: null, updateAqiImage: () => {}, updateAqiBadge: () => {} })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_RESULT', {
+      field: { nx: 1, ny: 1, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30] },
+      home: { aqi: 30, time: '2026-09-21T20:00' }
+    })
+    assert.match(shown[shown.length - 1], /^Air quality updated /)
+  })
+
+  it('stamps errors and recovers on the next request', () => {
+    const { c, shown } = statusCtx({ aqi: null, updateAqiImage: () => {}, updateAqiBadge: () => {} })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_ERROR', {})
+    assert.equal(shown[shown.length - 1], 'Air quality unavailable — retrying')
+    def.getAqi.call({ ...c, config: { lat: 1, lon: 2 }, sendSocketNotification: c.sendSocketNotification, markFeed: c.markFeed, updateStatus: c.updateStatus })
+    assert.equal(shown[shown.length - 1], 'Updating air quality…')
+  })
+})
