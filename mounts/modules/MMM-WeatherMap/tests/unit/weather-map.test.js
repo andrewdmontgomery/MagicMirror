@@ -1688,6 +1688,97 @@ describe('aqiBounds', () => {
   })
 })
 
+describe('updateAqiImage', () => {
+  const FIELD = { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30, 30, 30, 30] }
+
+  function canvasDocument () {
+    const realDocument = global.document
+    const ctx2d = {
+      createImageData: (w, h) => ({ data: new Array(w * h * 4).fill(0) }),
+      putImageData () {},
+      drawImage () {},
+      createLinearGradient: () => ({ addColorStop () {} }),
+      fillRect () {},
+      fillStyle: null,
+      imageSmoothingEnabled: false,
+      imageSmoothingQuality: 'low'
+    }
+    global.document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => ctx2d,
+        toDataURL: () => 'data:image/png,aqi'
+      })
+    }
+    return () => {
+      if (realDocument === undefined) {
+        delete global.document
+      } else {
+        global.document = realDocument
+      }
+    }
+  }
+
+  function aqiCtx (map) {
+    return ctx({
+      map,
+      mapReady: true,
+      view: 'aqi',
+      config: { aqiOpacity: 0.8 },
+      aqi: { field: FIELD, home: { aqi: 30 } }
+    })
+  }
+
+  it('pushes a fresh image through the ImageSource API', () => {
+    const updated = []
+    const map = {
+      getSource: (id) => (id === 'aqi-wash' ? { updateImage: (opts) => updated.push(opts) } : undefined),
+      getLayer: () => undefined
+    }
+    const c = aqiCtx(map)
+    for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
+      c[fn] = (...args) => def[fn].call(c, ...args)
+    }
+    const restore = canvasDocument()
+    try {
+      def.updateAqiImage.call(c)
+    } finally {
+      restore()
+    }
+    assert.equal(updated.length, 1)
+    assert.equal(updated[0].url, 'data:image/png,aqi')
+    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, FIELD))
+  })
+
+  it('creates the source and layer on first call', () => {
+    const added = []
+    const map = {
+      getSource: () => undefined,
+      getLayer: (id) => (id === 'markers' ? {} : undefined),
+      addSource: (id) => { added.push(['source', id]) },
+      addLayer: (def) => { added.push(['layer', def.id]) },
+      moveLayer: (id) => { added.push(['move', id]) }
+    }
+    const c = aqiCtx(map)
+    for (const fn of ['updateAqiImage', 'aqiImageUrl', 'aqiBounds', 'aqiColor', 'isAqiView']) {
+      c[fn] = (...args) => def[fn].call(c, ...args)
+    }
+    const restore = canvasDocument()
+    try {
+      def.updateAqiImage.call(c)
+    } finally {
+      restore()
+    }
+    assert.deepEqual(added, [['source', 'aqi-wash'], ['layer', 'aqi-wash'], ['move', 'markers']])
+  })
+
+  it('no-ops without a ready map or field', () => {
+    def.updateAqiImage.call(ctx({ map: null, mapReady: false, aqi: null }))
+    def.updateAqiImage.call(ctx({ map: {}, mapReady: false, aqi: { field: FIELD } }))
+  })
+})
+
 describe('AQI socket handling', () => {
   function aqiPayload (aqi = 93) {
     return {

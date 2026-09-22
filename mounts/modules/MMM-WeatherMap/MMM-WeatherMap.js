@@ -1202,10 +1202,10 @@ Module.register('MMM-WeatherMap', {
       }
       return
     }
-    this.map.getSource('aqi-wash').setData(
-      this.aqiImageUrl(this.aqi.field),
-      this.aqiBounds(this.aqi.field)
-    )
+    this.map.getSource('aqi-wash').updateImage({
+      url: this.aqiImageUrl(this.aqi.field),
+      coordinates: this.aqiBounds(this.aqi.field)
+    })
   },
 
   /* Show the wash layer (creating it from the latest field when
