@@ -637,4 +637,49 @@ describe('fetchAqiChunk 429 handling', () => {
       helper.waitMs = realWait
     }
   })
+
+  it('fails fast on daily-quota 429s without retrying', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    let calls = 0
+    try {
+      global.fetch = async () => {
+        calls += 1
+        return {
+          ok: false,
+          status: 429,
+          headers: { get: () => null },
+          text: async () => '{"error":true,"reason":"Daily API request limit exceeded. Please retry in 24 hours."}'
+        }
+      }
+      // A retry against a daily quota is pure spend — the reason
+      // surfaces, no wait happens, fetch runs exactly once.
+      await assert.rejects(helper.fetchAqiChunk([[40, -100]]), /daily quota.*Daily API request limit exceeded/)
+      assert.equal(calls, 1)
+      assert.deepEqual(waits, [])
+    } finally {
+      helper.waitMs = realWait
+    }
+  })
+
+  it('carries the error body into the throw after a failed retry', async () => {
+    const waits = []
+    const realWait = helper.waitMs
+    helper.waitMs = async (ms) => { waits.push(ms) }
+    try {
+      global.fetch = async () => ({
+        ok: false,
+        status: 429,
+        headers: { get: () => null },
+        text: async () => 'Minute rate limit exceeded, retry shortly'
+      })
+      // Per-minute quota: still one 60 s retry, then the body lands
+      // in the throw (and from there in the helper error log).
+      await assert.rejects(helper.fetchAqiChunk([[40, -100]]), /429.*Minute rate limit exceeded/)
+      assert.deepEqual(waits, [60000])
+    } finally {
+      helper.waitMs = realWait
+    }
+  })
 })

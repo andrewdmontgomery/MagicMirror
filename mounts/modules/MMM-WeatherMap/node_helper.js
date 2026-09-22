@@ -384,6 +384,10 @@ module.exports = NodeHelper.create({
       const list = await this.fetchAqiGrid(params)
       const mapped = this.mapAqiResponse(list, params, lat, lon)
       this.aqiCache = { lat, lon, fetchedAt: Date.now(), field: mapped.field, home: mapped.home }
+      console.log(
+        `MMM-WeatherMap: AQI fields ${mapped.field.values.length} nodes, ` +
+        `home ${mapped.home.aqi === null ? 'n/a' : mapped.home.aqi.toFixed(0)} US-AQI`
+      )
       this.sendSocketNotification('AQI_FIELDS_RESULT', { field: mapped.field, home: mapped.home })
     } catch (error) {
       console.error('MMM-WeatherMap: failed to fetch AQI fields', error.message || error)
@@ -432,8 +436,10 @@ module.exports = NodeHelper.create({
   },
 
   /* A single chunk request. On HTTP 429, backs off once for the
-   * server's Retry-After (default 60 s) and retries; anything
-   * still failing throws so the caller reports an error. */
+   * server's Retry-After (default 60 s) and retries — unless the
+   * body names the daily quota, which fails fast (a retry against
+   * a daily cap is pure spend). Anything still failing throws with
+   * the body attached, so the caller reports an error. */
   fetchAqiChunk: async function (pairs) {
     const plat = pairs.map(([la]) => la)
     const plon = pairs.map(([, lo]) => lo)
@@ -447,6 +453,20 @@ module.exports = NodeHelper.create({
         const json = await response.json()
         return Array.isArray(json) ? json : [json]
       }
+      // Error body, first ~200 chars (guarded: unit stubs omit
+      // .text, and a body read must never throw). The Sep-22
+      // diagnosis took an hour because logs showed only HTTP 429.
+      let detail = ''
+      if (response && typeof response.text === 'function') {
+        try {
+          detail = String(await response.text()).slice(0, 200)
+        } catch {
+          detail = ''
+        }
+      }
+      if (response.status === 429 && /daily/i.test(detail)) {
+        throw new Error(`HTTP 429 daily quota: ${detail}`)
+      }
       const rawRetryAfter =
         response.headers && typeof response.headers.get === 'function'
           ? response.headers.get('retry-after')
@@ -458,11 +478,14 @@ module.exports = NodeHelper.create({
         : Number(rawRetryAfter)
       if (response.status === 429 && !retried) {
         const delayMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : AQI_REQUEST_GAP_MS
-        console.warn(`MMM-WeatherMap: AQI rate-limited, retrying in ${Math.round(delayMs / 1000)}s`)
+        console.warn(
+          `MMM-WeatherMap: AQI rate-limited, retrying in ${Math.round(delayMs / 1000)}s` +
+          (detail ? `: ${detail}` : '')
+        )
         await this.waitMs(delayMs)
         continue
       }
-      throw new Error(`HTTP ${response.status}`)
+      throw new Error(`HTTP ${response.status}${detail ? `: ${detail}` : ''}`)
     }
     throw new Error('MMM-WeatherMap: AQI chunk retry exhausted')
   },
