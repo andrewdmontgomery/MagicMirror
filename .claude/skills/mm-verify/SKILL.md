@@ -45,11 +45,25 @@ restart. Use this after any edit under `mounts/config/` or `mounts/modules/`.
    by design.
 
 6. If the user reports stale behavior after a change to module JS/CSS/assets
-   (but not `config.js`), suspect the browser cache before the code:
-   module files keep the same URLs across deploys, so have them hard-refresh
-   (`Cmd+Shift+R` / `Ctrl+F5`, or Shift-click refresh in Safari) before
-   debugging further. Appending `?v=N` to fetched asset URLs (see
-   `new-mm-module`) avoids this class entirely for fetch-loaded assets.
+   (but not `config.js`), prove which side is stale before theorizing:
+   bind mounts mean the container always serves the current files, so
+   `curl -s http://localhost:8080/modules/<Name>/<File>.js | grep -c <marker>`
+   (with `<marker>` from your change) decides it — a hit means the deploy
+   is current and the browser is running cached code (hard-refresh:
+   `Cmd+Shift+R` / `Ctrl+F5`, or a fresh private window, which guarantees
+   no cache); a miss means the restart didn't pick the change up. Appending
+   `?v=N` to fetched asset URLs (see `new-mm-module`) avoids this class
+   entirely for fetch-loaded assets.
+
+7. If the restart is clean but the behavior is still wrong, instrument
+   before guessing: add clearly-marked temporary `console.log` lines
+   (`TEMP-DIAG` prefix) at the decision points, showing inputs and the
+   decision taken — never the fix, just evidence. Restart, have the user
+   reproduce with the browser devtools console open, and read the lines
+   they paste back: they show exactly which path ran with which values,
+   which beats another round of code-reading whenever the model of the
+   code disagrees with what the browser does. Remove every temporary
+   line before committing; they must never land in the repo.
 
 Do not skip step 3 — a container can restart "successfully" (exit code 0,
 `docker compose restart` reports no failure) while the actual MagicMirror

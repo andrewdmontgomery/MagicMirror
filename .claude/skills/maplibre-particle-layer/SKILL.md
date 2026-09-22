@@ -1,6 +1,6 @@
 ---
 name: maplibre-particle-layer
-description: Animate particles or custom overlays on a MapLibre map. Use whenever drawing wind streaks, particle flows, or canvas overlays on a map, ordering overlays against marker layers, running continuous map animation, or deciding between a DOM overlay canvas and a GL custom layer. Use even for questions about MapLibre render loops, repaint scheduling, or overlay performance.
+description: Animate particles or custom overlays on a MapLibre map. Use whenever drawing wind streaks, particle flows, or canvas overlays on a map, ordering overlays against marker layers, running continuous map animation, deciding between a DOM overlay canvas and a GL custom layer, clamping the camera with setMaxBounds/setMinZoom, animating the camera with easeTo/flyTo, or debugging unexpected camera movement. Use even for questions about MapLibre render loops, repaint scheduling, or overlay performance.
 ---
 
 # MapLibre Particle Layer
@@ -54,3 +54,38 @@ advection, sampling, colors, fades, layer add/remove guards — in pure
 functions and test those. Leave `render()`/`onAdd`/`onRemove` as thin
 glue: constructor-wires-in, pixels-out, verified visually in the
 browser with shader compile errors surfaced via console logging.
+
+The same split applies to camera work: pure decision helpers (should
+the camera move, and where to) stay tested, while `setMinZoom` /
+`setMaxBounds` / `easeTo` invocations stay untested glue. But a pure
+predicate that predicts what the clamp will do must model the
+platform's exact semantics — biased toward the safe action. A
+"center inside bounds → no correction" predicate disagrees with a
+clamp that re-fits the *viewport*: re-applying the same bounds then
+shoves a straddling camera to a viewport-fitting center, and the
+"no-op" decision produces a jump. Derive the predicate from the
+verified semantics below, never from the method names alone.
+
+## Camera constraints and animation traps
+
+All semantics below were verified against the vendored build (minified
+but greppable with `node` one-liners over the `.mjs`) — re-verify,
+don't trust memory, when behavior contradicts the model.
+
+- Clearing restores defaults: `setMaxBounds(null)` clears the bound
+  (`LngLatBounds.convert` is null-safe) and `setMinZoom(null)` resets
+  to the default floor. Toggling per-view clamps on entry / clearing
+  on exit is enough — defaults are unconstrained, so clearing
+  restores the other views' freedom with no camera call.
+- `setMaxBounds` re-fits the *viewport*, not the center. Setting
+  (or re-setting) bounds with a straddling camera snaps it to the
+  nearest viewport-fitting center immediately. Never re-apply bounds
+  on a path the decision helper called a no-op.
+- `easeTo` dies silently under Reduce Motion: with the OS
+  accessibility setting on, any `easeTo` without `essential: true`
+  runs with duration 0 — an intended glide becomes an instant jump.
+  Pass `essential: true` whenever the motion itself is the correction.
+- An in-flight ease leaks across view switches: exiting to another
+  view mid-glide lets the animation run on into the new view, so the
+  camera drifts where it shouldn't. Call `map.stop()` on exit — it
+  freezes the camera where it is, never moves it.
