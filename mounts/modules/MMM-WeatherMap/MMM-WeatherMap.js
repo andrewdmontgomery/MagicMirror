@@ -1178,41 +1178,53 @@ Module.register('MMM-WeatherMap', {
     return big.toDataURL()
   },
 
-  /* (Re)build the wash from the latest field: create the source on
-   * first call, push a fresh image on later ones. No-op without a
-   * ready map or field — safe to call from the socket handler. */
+  /* (Re)build the washes from the latest fields: continental
+   * context first (bottom), regional detail second (top, dropped
+   * below zoom 5 where its window can't fill the map). Existing
+   * sources get fresh images; missing ones are created. No-op
+   * without a ready map or field — safe to call from the socket
+   * handler. */
   updateAqiImage: function () {
     if (!this.map || !this.mapReady || !this.aqi || !this.aqi.field) {
       return
     }
-    if (!this.map.getSource('aqi-wash')) {
-      this.map.addSource('aqi-wash', {
-        type: 'image',
-        url: this.aqiImageUrl(this.aqi.field),
-        coordinates: this.aqiBounds(this.aqi.field)
-      })
-      this.map.addLayer({
-        id: 'aqi-wash',
-        type: 'raster',
-        source: 'aqi-wash',
-        // The windowed field fills the 420px map down to about
-        // zoom 5; wider than that the bounds read as a square,
-        // so the layer drops out instead of showing edges.
-        minzoom: 5,
-        paint: {
-          'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
-          'raster-opacity-transition': { duration: 350, delay: 0 }
-        }
-      })
-      if (this.map.getLayer('markers')) {
-        this.map.moveLayer('markers')
+    const layers = [
+      { id: 'aqi-wash-wide', field: this.aqi.continental },
+      { id: 'aqi-wash', field: this.aqi.field, minzoom: 5 }
+    ]
+    layers.forEach(({ id, field, minzoom }) => {
+      if (!field) {
+        return
       }
-      return
-    }
-    this.map.getSource('aqi-wash').updateImage({
-      url: this.aqiImageUrl(this.aqi.field),
-      coordinates: this.aqiBounds(this.aqi.field)
+      if (!this.map.getSource(id)) {
+        const layer = {
+          id,
+          type: 'raster',
+          source: id,
+          paint: {
+            'raster-opacity': this.isAqiView() ? this.config.aqiOpacity : 0,
+            'raster-opacity-transition': { duration: 350, delay: 0 }
+          }
+        }
+        if (minzoom !== undefined) {
+          layer.minzoom = minzoom
+        }
+        this.map.addSource(id, {
+          type: 'image',
+          url: this.aqiImageUrl(field),
+          coordinates: this.aqiBounds(field)
+        })
+        this.map.addLayer(layer)
+        return
+      }
+      this.map.getSource(id).updateImage({
+        url: this.aqiImageUrl(field),
+        coordinates: this.aqiBounds(field)
+      })
     })
+    if (this.map.getLayer('markers')) {
+      this.map.moveLayer('markers')
+    }
   },
 
   /* Show the wash layer (creating it from the latest field when
@@ -1224,21 +1236,29 @@ Module.register('MMM-WeatherMap', {
   },
 
   /* Wash visibility switch (after a fade-out completes, or before
-   * fading back in). */
+   * fading back in). Both layers move together. */
   setAqiLayerVisible: function (visible) {
-    if (!this.map || !this.map.getLayer('aqi-wash')) {
+    if (!this.map) {
       return
     }
-    this.map.setLayoutProperty('aqi-wash', 'visibility', visible ? 'visible' : 'none')
+    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
+      if (this.map.getLayer(id)) {
+        this.map.setLayoutProperty(id, 'visibility', visible ? 'visible' : 'none')
+      }
+    })
   },
 
-  /* Fade the wash to an opacity (the paint transition glides it).
-   * Guards the missing layer for pre-load calls. */
+  /* Fade both washes to an opacity (the paint transition glides
+   * them). Per-layer guards for pre-load calls. */
   fadeAqiTo: function (opacity) {
-    if (!this.map || !this.map.getLayer('aqi-wash')) {
+    if (!this.map) {
       return
     }
-    this.map.setPaintProperty('aqi-wash', 'raster-opacity', opacity)
+    ['aqi-wash-wide', 'aqi-wash'].forEach((id) => {
+      if (this.map.getLayer(id)) {
+        this.map.setPaintProperty(id, 'raster-opacity', opacity)
+      }
+    })
   },
 
   scheduleAqiHide: function () {

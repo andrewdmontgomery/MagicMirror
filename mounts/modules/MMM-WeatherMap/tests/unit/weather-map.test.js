@@ -1690,6 +1690,7 @@ describe('aqiBounds', () => {
 
 describe('updateAqiImage', () => {
   const FIELD = { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [30, 30, 30, 30] }
+  const WIDE = { nx: 3, ny: 2, lat0: 50, lon0: -126, dLat: 2, dLon: 2, values: [20, 20, 20, 20, 20, 20] }
 
   function canvasDocument () {
     const realDocument = global.document
@@ -1726,14 +1727,15 @@ describe('updateAqiImage', () => {
       mapReady: true,
       view: 'aqi',
       config: { aqiOpacity: 0.8 },
-      aqi: { field: FIELD, home: { aqi: 30 } }
+      aqi: { field: FIELD, continental: WIDE, home: { aqi: 30 } }
     })
   }
 
-  it('pushes a fresh image through the ImageSource API', () => {
+  it('pushes fresh images through the ImageSource API', () => {
     const updated = []
+    const source = { updateImage: (opts) => updated.push(opts) }
     const map = {
-      getSource: (id) => (id === 'aqi-wash' ? { updateImage: (opts) => updated.push(opts) } : undefined),
+      getSource: (id) => (id === 'aqi-wash' || id === 'aqi-wash-wide' ? source : undefined),
       getLayer: () => undefined
     }
     const c = aqiCtx(map)
@@ -1746,12 +1748,15 @@ describe('updateAqiImage', () => {
     } finally {
       restore()
     }
-    assert.equal(updated.length, 1)
-    assert.equal(updated[0].url, 'data:image/png,aqi')
-    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, FIELD))
+    assert.equal(updated.length, 2)
+    for (const opts of updated) {
+      assert.equal(opts.url, 'data:image/png,aqi')
+    }
+    assert.deepEqual(updated[0].coordinates, def.aqiBounds.call(c, WIDE))
+    assert.deepEqual(updated[1].coordinates, def.aqiBounds.call(c, FIELD))
   })
 
-  it('creates the source and layer on first call', () => {
+  it('creates both sources with detail on top on first call', () => {
     const added = []
     const map = {
       getSource: () => undefined,
@@ -1770,7 +1775,13 @@ describe('updateAqiImage', () => {
     } finally {
       restore()
     }
-    assert.deepEqual(added, [['source', 'aqi-wash'], ['layer', 'aqi-wash'], ['move', 'markers']])
+    assert.deepEqual(added, [
+      ['source', 'aqi-wash-wide'],
+      ['layer', 'aqi-wash-wide'],
+      ['source', 'aqi-wash'],
+      ['layer', 'aqi-wash'],
+      ['move', 'markers']
+    ])
   })
 
   it('no-ops without a ready map or field', () => {
@@ -1801,17 +1812,21 @@ describe('aqi view opacity', () => {
     return { c, paint, layout }
   }
 
-  it('fades the wash in on entering the aqi view', () => {
+  it('fades both washes in on entering the aqi view', () => {
     const { c, paint, layout } = opacityCtx('aqi')
     def.syncContentToView.call(c)
-    assert.ok(paint.some(([layer, prop, value]) => layer === 'aqi-wash' && prop === 'raster-opacity' && value === 0.8))
-    assert.ok(layout.some(([layer, prop, value]) => layer === 'aqi-wash' && prop === 'visibility' && value === 'visible'))
+    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
+      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0.8))
+      assert.ok(layout.some(([l, prop, value]) => l === layer && prop === 'visibility' && value === 'visible'))
+    }
   })
 
-  it('fades the wash out on leaving for the wind view', () => {
+  it('fades both washes out on leaving for the wind view', () => {
     const { c, paint } = opacityCtx('wind')
     def.syncContentToView.call(c)
-    assert.ok(paint.some(([layer, prop, value]) => layer === 'aqi-wash' && prop === 'raster-opacity' && value === 0))
+    for (const layer of ['aqi-wash', 'aqi-wash-wide']) {
+      assert.ok(paint.some(([l, prop, value]) => l === layer && prop === 'raster-opacity' && value === 0))
+    }
   })
 })
 
