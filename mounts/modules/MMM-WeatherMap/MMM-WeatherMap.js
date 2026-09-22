@@ -354,7 +354,9 @@ Module.register('MMM-WeatherMap', {
         this.map.setMaxBounds(bounds)
       }
     })
-    this.map.easeTo({ center: correction.center, zoom: correction.zoom, duration: 800 })
+    // essential: OS "reduce motion" would otherwise force duration 0
+    // (an instant jump) — this glide is the correction itself.
+    this.map.easeTo({ center: correction.center, zoom: correction.zoom, duration: 800, essential: true })
   },
 
   /* Release the AQI clamp — defaults are unconstrained, so clearing
