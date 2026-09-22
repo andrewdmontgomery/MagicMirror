@@ -379,28 +379,45 @@ module.exports = NodeHelper.create({
     return { field, home: { aqi, time } }
   },
 
-  /* AQI field: current US-AQI on the regional grid around the
-   * requested point (one multi-location CAMS request, keyless).
-   * Emits AQI_FIELDS_RESULT with the field plus the bilinear home
-   * value the badge reads; AQI_FIELDS_ERROR on failure. The
-   * continental context grid stays demand-driven (fetchAqiWide)
-   * so boot and every refresh stay a single fast request. */
+  /* AQI fields: current US-AQI on the regional grid around the
+   * requested point plus the continental context grid (one
+   * multi-location CAMS request each, keyless). Sends the regional
+   * payload first (badge in seconds), then the full payload when
+   * the wide grid lands — both are prefetched up front so
+   * zooming out never waits on the network. AQI_FIELDS_ERROR
+   * only when regional fails; a wide failure keeps regional
+   * standing (the frontend demand hook refetches it later). */
   fetchAqi: async function ({ lat, lon } = {}) {
     if (lat === undefined || lon === undefined) {
       return
     }
+    const regional = this.aqiGridParams(lat, lon)
+    const continental = this.aqiWideParams()
+    let mapped
     try {
-      const regional = this.aqiGridParams(lat, lon)
       const regionalList = await this.fetchAqiGrid(regional)
-      const mapped = this.mapAqiResponse(regionalList, regional, lat, lon)
-      console.log(
-        `MMM-WeatherMap: AQI field ${mapped.field.values.length} nodes, ` +
-        `home ${mapped.home.aqi === null ? 'n/a' : mapped.home.aqi.toFixed(0)} US-AQI`
-      )
+      mapped = this.mapAqiResponse(regionalList, regional, lat, lon)
       this.sendSocketNotification('AQI_FIELDS_RESULT', { field: mapped.field, home: mapped.home })
     } catch (error) {
       console.error('MMM-WeatherMap: failed to fetch AQI fields', error.message || error)
       this.sendSocketNotification('AQI_FIELDS_ERROR', {})
+      return
+    }
+    try {
+      const continentalList = await this.fetchAqiGrid(continental)
+      const wide = this.mapAqiResponse(continentalList, continental, lat, lon)
+      const home = mapped.home.aqi === null ? wide.home : mapped.home
+      console.log(
+        `MMM-WeatherMap: AQI fields ${mapped.field.values.length}+${wide.field.values.length} nodes, ` +
+        `home ${home.aqi === null ? 'n/a' : home.aqi.toFixed(0)} US-AQI`
+      )
+      this.sendSocketNotification('AQI_FIELDS_RESULT', {
+        field: mapped.field,
+        continental: wide.field,
+        home
+      })
+    } catch (error) {
+      console.error('MMM-WeatherMap: wide AQI grid failed, keeping regional', error.message || error)
     }
   },
 

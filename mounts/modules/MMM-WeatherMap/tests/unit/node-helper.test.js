@@ -507,17 +507,26 @@ describe('fetchAqi', () => {
     } finally {
       helper.waitMs = realWait
     }
-    // Regional only: one request, one notification.
-    assert.equal(fetchedUrls.length, 1)
-    assert.match(fetchedUrls[0], /air-quality-api\.open-meteo\.com.*current=us_aqi/)
-    const latitudes = fetchedUrls[0].match(/latitude=([^&]*)/)[1].split(',')
-    assert.equal(latitudes.length, 315)
-    assert.equal(sent.length, 1)
+    // Regional first (badge in seconds), full payload when wide lands.
+    assert.equal(fetchedUrls.length, 4)
+    for (const url of fetchedUrls) {
+      assert.match(url, /air-quality-api\.open-meteo\.com.*current=us_aqi/)
+      const latitudes = url.match(/latitude=([^&]*)/)[1].split(',')
+      const longitudes = url.match(/longitude=([^&]*)/)[1].split(',')
+      assert.equal(latitudes.length, longitudes.length)
+      assert.ok(latitudes.length <= 350)
+    }
+    assert.equal(sent.length, 2)
     assert.equal(sent[0][0], 'AQI_FIELDS_RESULT')
     assert.equal(sent[0][1].field.values.length, 315)
     assert.equal(sent[0][1].continental, undefined)
     assert.equal(sent[0][1].home.aqi, 31)
-    assert.deepEqual(waits, [])
+    assert.equal(sent[1][0], 'AQI_FIELDS_RESULT')
+    assert.equal(sent[1][1].field.values.length, 315)
+    assert.equal(sent[1][1].continental.values.length, 24 * 42)
+    assert.equal(sent[1][1].home.aqi, 31)
+    // Rate-limit gaps between the wide chunks only.
+    assert.deepEqual(waits, [60000, 60000])
   })
 
   it('sends nothing without coordinates', async () => {
