@@ -492,7 +492,7 @@ describe('setView', () => {
 
   it('rejects unknown views and no-op switches', () => {
     const { c, notified, redrawn } = viewCtx('precip')
-    assert.equal(def.setView.call(c, 'aqi'), false)
+    assert.equal(def.setView.call(c, 'smoke'), false)
     assert.equal(def.setView.call(c, 'precip'), false)
     assert.deepEqual(notified, [])
     assert.deepEqual(redrawn, [])
@@ -506,6 +506,28 @@ describe('setView', () => {
     assert.equal(c.view, 'wind')
     assert.deepEqual(notified, [['WEATHERMAP_VIEW_CHANGED', { view: 'wind' }]])
     assert.deepEqual(redrawn, [])
+  })
+
+  it('switches to the aqi view and broadcasts it', () => {
+    const { c, notified, redrawn } = viewCtx('wind')
+    assert.equal(def.setView.call(c, 'aqi'), true)
+    assert.equal(c.view, 'aqi')
+    assert.deepEqual(notified, [['WEATHERMAP_VIEW_CHANGED', { view: 'aqi' }]])
+    assert.deepEqual(redrawn, [])
+  })
+
+  it('leaves the static aqi view unscheduled', () => {
+    const ensured = []
+    const c = ctx({
+      view: 'aqi',
+      map: null,
+      playing: { precip: true, wind: true, aqi: true },
+      ensureAqiLayer: () => { ensured.push(true) }
+    })
+    def.restartAnimation.call(c)
+    assert.ok(!c.frameTimer)
+    assert.equal(c.progressRaf, null)
+    assert.deepEqual(ensured, [true])
   })
 
   it('routes WEATHERMAP_SET_VIEW notifications to setView', () => {
@@ -1624,5 +1646,81 @@ describe('updateTimeline', () => {
 
   it('does nothing before the timeline exists', () => {
     def.updateTimeline.call(ctx({ frames: framesFixture(5) }))
+  })
+})
+
+describe('aqiColor', () => {
+  it('maps EPA band boundaries to their colors', () => {
+    assert.deepEqual(def.aqiColor.call(ctx(), 0), [0, 228, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 50), [0, 228, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 100), [255, 255, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 150), [255, 126, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 200), [255, 0, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 300), [143, 63, 151])
+    assert.deepEqual(def.aqiColor.call(ctx(), 500), [126, 0, 35])
+  })
+
+  it('interpolates inside bands', () => {
+    assert.deepEqual(def.aqiColor.call(ctx(), 75), [128, 242, 0])
+  })
+
+  it('clamps out-of-range values', () => {
+    assert.deepEqual(def.aqiColor.call(ctx(), -5), [0, 228, 0])
+    assert.deepEqual(def.aqiColor.call(ctx(), 900), [126, 0, 35])
+  })
+
+  it('returns null for missing values so they render transparent', () => {
+    for (const missing of [null, undefined, NaN]) {
+      assert.equal(def.aqiColor.call(ctx(), missing), null)
+    }
+  })
+})
+
+describe('aqiBounds', () => {
+  it('pads the grid centers by half a cell', () => {
+    const field = { nx: 21, ny: 15, lat0: 47, lon0: -110, dLat: 1, dLon: 1, values: [] }
+    assert.deepEqual(def.aqiBounds.call(ctx(), field), [
+      [-110.5, 47.5],
+      [-89.5, 47.5],
+      [-89.5, 32.5],
+      [-110.5, 32.5]
+    ])
+  })
+})
+
+describe('AQI socket handling', () => {
+  function aqiPayload (aqi = 93) {
+    return {
+      field: { nx: 2, ny: 2, lat0: 40, lon0: -100, dLat: 1, dLon: 1, values: [aqi, aqi, aqi, aqi] },
+      home: { aqi, time: '2026-09-21T20:00' }
+    }
+  }
+
+  it('stores the field, refreshes the layer, and broadcasts the home value', () => {
+    const refreshed = []
+    const notified = []
+    const c = ctx({
+      aqi: null,
+      view: 'aqi',
+      sendNotification: (n, p) => notified.push([n, p]),
+      updateAqiImage: () => { refreshed.push(true) }
+    })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_RESULT', aqiPayload(93))
+    assert.deepEqual(c.aqi, aqiPayload(93))
+    assert.deepEqual(refreshed, [true])
+    assert.deepEqual(notified, [['WEATHERMAP_AQI_UPDATED', { aqi: 93, time: '2026-09-21T20:00' }]])
+  })
+
+  it('keeps the previous field on error without crashing', () => {
+    const notified = []
+    const previous = aqiPayload(31)
+    const c = ctx({
+      aqi: previous,
+      sendNotification: (n, p) => notified.push([n, p]),
+      updateAqiImage: () => { throw new Error('must not refresh on error') }
+    })
+    def.socketNotificationReceived.call(c, 'AQI_FIELDS_ERROR', {})
+    assert.equal(c.aqi, previous)
+    assert.deepEqual(notified, [])
   })
 })
