@@ -1,6 +1,7 @@
 {
 	"name": "magicmirror-config",
 	"private": true,
+	"license": "MIT",
 	"description": "Docker-mounted MagicMirror config and first-party modules.",
 	"scripts": {
 		"test": "npm run test:hourly-strip && npm run test:weather-map && npm run test:weather-watcher",
