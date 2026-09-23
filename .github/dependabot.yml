@@ -1,0 +1,8 @@
+# Keep pinned GitHub Actions (and any future action refs) up to date via
+# automated PRs, so SHA pins don't freeze us on stale upstream code.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
