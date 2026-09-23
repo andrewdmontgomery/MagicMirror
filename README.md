@@ -141,3 +141,23 @@ npm run test:weather-watcher
 Tests run with `node --test` against `*/tests/unit/*.test.js` and cover the
 pure front-end/helper logic (e.g. HourlyStrip column building, WeatherMap
 frame handling, WeatherWatcher view selection). WindCompass has no suite.
+
+## License
+
+MIT — see [LICENSE](LICENSE). This repo's first-party code (config plus the
+four `MMM-*` modules) is MIT-licensed.
+
+## Credits
+
+- Vendored: [Meteocons](https://github.com/basmilius/weather-icons) (MIT) icons
+  in `MMM-HourlyStrip/icons`; [MapLibre GL JS](https://github.com/maplibre/maplibre-gl-js)
+  v6.10.0 (BSD-3-Clause) in `MMM-WeatherMap/vendor` — see the `LICENSE` files
+  in those directories.
+- Runtime: [MagicMirror²](https://github.com/MagicMirrorOrg/MagicMirror) (MIT)
+  via the `karsten13/magicmirror` image.
+- Data: [Open-Meteo](https://open-meteo.com/) (forecast + air quality),
+  [NOAA HRRR](https://www.nco.ncep.noaa.gov/pmb/products/hrrr/) via AWS open
+  data, [RainViewer](https://www.rainviewer.com/api.html) radar,
+  [CARTO basemaps](https://carto.com/basemaps/) on
+  [OpenStreetMap](https://www.openstreetmap.org/copyright) data.
+- Original UI only — no affiliation with Apple or any weather app.
