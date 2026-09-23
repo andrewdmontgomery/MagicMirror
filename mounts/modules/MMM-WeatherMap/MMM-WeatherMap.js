@@ -72,10 +72,12 @@ const MS_TO_KMH = 3.6
  * controls tail length. Long enough to read as streaks even at a
  * 10 mph crawl (~0.4px/frame). */
 const WIND_TRAIL_POINTS = 48
-/* Dying trails linger this many frames as headless ghosts, fading out
- * instead of popping. The cap must clear the steady-state ghost flow
- * (~2.4 respawns/frame × 45 frames ≈ 108) or it truncates the fade. */
-const GHOST_FRAMES = 45
+/* Dying trails collapse in place: the head dot vanishes immediately and
+ * the frozen tail is consumed from its tail end at one history point per
+ * frame — precisely the rate at which it was laid down — so the whole
+ * particle+tail system disappears at the death location. The ghost cap
+ * must clear the steady-state ghost flow (~2.4 respawns/frame × 48 points
+ * ≈ 115) or it truncates the collapse. */
 const MAX_GHOSTS = 120
 
 Module.register('MMM-WeatherMap', {
@@ -2454,9 +2456,9 @@ Module.register('MMM-WeatherMap', {
     this.drawTrails(ctx2d, width, height)
     if (advance) {
       this.ghosts.forEach((g) => {
-        g.life -= 1 / GHOST_FRAMES
+        g.trail.shift()
       })
-      this.ghosts = this.ghosts.filter((g) => g.life > 0)
+      this.ghosts = this.ghosts.filter((g) => g.trail.length > 1)
     }
   },
 
@@ -2476,22 +2478,25 @@ Module.register('MMM-WeatherMap', {
     }
     // Ghosts under live trails so fresh heads stay crisp on top.
     this.ghosts.forEach((g) => {
-      this.strokeTrail(ctx2d, g, g.life, g.ratio)
+      this.strokeTrail(ctx2d, g, 1, g.ratio)
     })
     this.particles.forEach((p) => {
       this.strokeTrail(ctx2d, p, 1, p.ratio)
     })
   },
 
-  /* A dying particle's trail detaches into a headless ghost that
-   * keeps reprojecting while its alpha runs down — the tail fades
-   * instead of popping. Copies history (never the live reference);
-   * keeps the death-speed ratio so the color fades with the trail. */
+  /* A dying particle's trail detaches into a headless ghost: the head
+   * dot (newest point) is dropped immediately, and the frozen tail is
+   * then consumed from its tail end at one point per frame — the same
+   * rate it was laid down — so it collapses into the death location
+   * instead of fading as a whole. Copies history (never the live
+   * reference); keeps the death-speed ratio so the color holds while
+   * the tail retracts. */
   ghostTrail: function (particle, ratio = 1) {
-    if (!particle.trail || particle.trail.length < 2) {
+    if (!particle.trail || particle.trail.length < 3) {
       return
     }
-    this.ghosts.push({ trail: particle.trail.slice(), life: 1, ratio })
+    this.ghosts.push({ trail: particle.trail.slice(0, -1), ratio })
     if (this.ghosts.length > MAX_GHOSTS) {
       this.ghosts.splice(0, this.ghosts.length - MAX_GHOSTS)
     }
