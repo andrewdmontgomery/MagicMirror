@@ -47,7 +47,7 @@ All location modules share one hardcoded lat/lon (Inver Grove Heights, MN) with 
 - `MMM-HourlyStrip` (bottom_bar) — 24 h Open-Meteo hourly strip; its `WEATHER_UPDATED` hourly feed drives the Watcher below
 - `MMM-WindCompass` (bottom_right) — the custom compass module
 - `MMM-WeatherMap` (bottom_left) — MapLibre rain/wind/AQI map, view-controlled via `WEATHERMAP_SET_VIEW`
-- `MMM-WeatherWatcher` (no position) — picks the map's default view from the strip's precip forecast plus the map's home AQI
+- `MMM-WeatherWatcher` (no position) — picks the map's default view from the strip's precip forecast plus the map's home AQI, first match wins: imminent rain (0–3h) → severe AQI (≥151) → distant rain (3–12h) → elevated AQI (≥101) → wind
 
 **Weather provider**: deliberately `openmeteo`, not `openweathermap`. OpenWeatherMap's provider in the weather module calls `/data/3.0/onecall`, which requires an active paid subscription (card on file) even at zero usage — Open-Meteo is free/keyless and covers the same current+forecast+UV+wind data used here.
 
