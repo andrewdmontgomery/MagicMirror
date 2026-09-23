@@ -160,4 +160,3 @@ four `MMM-*` modules) is MIT-licensed.
   data, [RainViewer](https://www.rainviewer.com/api.html) radar,
   [CARTO basemaps](https://carto.com/basemaps/) on
   [OpenStreetMap](https://www.openstreetmap.org/copyright) data.
-- Original UI only — no affiliation with Apple or any weather app.
