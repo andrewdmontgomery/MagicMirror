@@ -1,9 +1,11 @@
-/* MMM-WeatherWatcher tests — forecast outcome to WEATHERMAP_SET_VIEW mapping.
+/* MMM-WeatherWatcher tests — urgency rubric to WEATHERMAP_SET_VIEW mapping.
  * Run: npm run test:weather-watcher
  *
- * The module is always-visible-map's view selector: precipitation within
- * the window selects "precip", otherwise "wind". Pure notification mapping —
- * no DOM, no MM runtime (sendNotification is captured, not delivered).
+ * First match wins: imminent rain (0-3h) selects "precip", else severe
+ * AQI (>= 151) selects "aqi", else near-term rain (3-12h) selects
+ * "precip", else elevated AQI (>= 101) selects "aqi", otherwise "wind".
+ * Pure notification mapping — no DOM, no MM runtime (sendNotification
+ * is captured, not delivered).
  */
 const { describe, it } = require('node:test')
 const assert = require('node:assert/strict')
@@ -26,7 +28,8 @@ function ctx (overrides = {}) {
   const sent = []
   const o = Object.create(def)
   Object.assign(o, {
-    config: { forecastHours: 12, precipProbabilityThreshold: 30, precipAmountThreshold: 0.3, aqiThreshold: 101 },
+    config: { forecastHours: 12, imminentHours: 3, precipProbabilityThreshold: 30, precipAmountThreshold: 0.3, aqiThreshold: 101, aqiSevereThreshold: 151 },
+    precipImminent: null,
     precipExpected: null,
     aqiNow: null,
     lastSentView: undefined,
@@ -89,6 +92,7 @@ describe('evaluateForecast', () => {
       def.notificationReceived.call(c, 'WEATHER_UPDATED', payload)
       assert.deepEqual(sent, [])
       assert.equal(c.precipExpected, null)
+      assert.equal(c.precipImminent, null)
     }
   })
 
@@ -105,45 +109,117 @@ describe('evaluateForecast', () => {
       ['WEATHERMAP_SET_VIEW', { view: 'wind' }]
     ])
   })
+
+  it('flags imminent rain separately from outer-window rain', () => {
+    const near = ctx()
+    def.notificationReceived.call(near.c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(1, 80, 0)]
+    })
+    assert.equal(near.c.precipImminent, true)
+    assert.equal(near.c.precipExpected, true)
+    assert.deepEqual(near.sent, [['WEATHERMAP_SET_VIEW', { view: 'precip' }]])
+
+    const far = ctx()
+    def.notificationReceived.call(far.c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(6, 80, 0)]
+    })
+    assert.equal(far.c.precipImminent, false)
+    assert.equal(far.c.precipExpected, true)
+    assert.deepEqual(far.sent, [['WEATHERMAP_SET_VIEW', { view: 'precip' }]])
+  })
+
+  it('selects precip on a distant amount-threshold hour alone', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(6, 5, 0.5)]
+    })
+    assert.equal(c.precipImminent, false)
+    assert.equal(c.precipExpected, true)
+    assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'precip' }]])
+  })
 })
 
 describe('DOM_OBJECTS_CREATED', () => {
   it('re-asserts the latest decision once the DOM exists', () => {
-    const { c, sent } = ctx({ precipExpected: true })
+    const { c, sent } = ctx({ precipImminent: true, precipExpected: true })
     def.notificationReceived.call(c, 'DOM_OBJECTS_CREATED', {})
     assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'precip' }]])
   })
 
   it('sends nothing before any forecast arrived', () => {
-    const { c, sent } = ctx({ precipExpected: null })
+    const { c, sent } = ctx({ precipImminent: null, precipExpected: null })
     def.notificationReceived.call(c, 'DOM_OBJECTS_CREATED', {})
     assert.deepEqual(sent, [])
   })
 })
 
-describe('AQI threshold', () => {
+describe('AQI rubric', () => {
   function aqi (value) {
     return { aqi: value, time: '2026-09-21T20:00' }
   }
 
-  it('selects aqi when home AQI reaches the threshold, beating rain', () => {
+  it('lets imminent rain beat severe AQI', () => {
     const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(200))
     def.notificationReceived.call(c, 'WEATHER_UPDATED', {
       hourlyArray: [hourlyEntry(2, 80, 0)]
     })
-    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(150))
+    assert.deepEqual(sent, [
+      ['WEATHERMAP_SET_VIEW', { view: 'aqi' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'precip' }]
+    ])
+  })
+
+  it('lets severe AQI beat distant rain', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(6, 80, 0)]
+    })
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(160))
     assert.deepEqual(sent, [
       ['WEATHERMAP_SET_VIEW', { view: 'precip' }],
       ['WEATHERMAP_SET_VIEW', { view: 'aqi' }]
     ])
   })
 
-  it('holds the threshold boundary at 101', () => {
+  it('lets distant rain beat moderate AQI', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(120))
+    def.notificationReceived.call(c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(6, 80, 0)]
+    })
+    assert.deepEqual(sent, [
+      ['WEATHERMAP_SET_VIEW', { view: 'aqi' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'precip' }]
+    ])
+  })
+
+  it('selects aqi for elevated AQI alone', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(120))
+    assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'aqi' }]])
+  })
+
+  it('holds the elevated boundary at 101', () => {
     const { c, sent } = ctx()
     def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(100))
     assert.deepEqual(sent, [])
     def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(101))
     assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'aqi' }]])
+  })
+
+  it('holds the severe boundary at 151 against distant rain', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(6, 80, 0)]
+    })
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(150))
+    assert.deepEqual(sent, [['WEATHERMAP_SET_VIEW', { view: 'precip' }]])
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(151))
+    assert.deepEqual(sent, [
+      ['WEATHERMAP_SET_VIEW', { view: 'precip' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'aqi' }]
+    ])
   })
 
   it('falls back when AQI clears below the threshold', () => {
@@ -153,6 +229,20 @@ describe('AQI threshold', () => {
     assert.deepEqual(sent, [
       ['WEATHERMAP_SET_VIEW', { view: 'aqi' }],
       ['WEATHERMAP_SET_VIEW', { view: 'wind' }]
+    ])
+  })
+
+  it('falls back to distant rain when severe AQI clears to moderate', () => {
+    const { c, sent } = ctx()
+    def.notificationReceived.call(c, 'WEATHER_UPDATED', {
+      hourlyArray: [hourlyEntry(6, 80, 0)]
+    })
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(160))
+    def.notificationReceived.call(c, 'WEATHERMAP_AQI_UPDATED', aqi(120))
+    assert.deepEqual(sent, [
+      ['WEATHERMAP_SET_VIEW', { view: 'precip' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'aqi' }],
+      ['WEATHERMAP_SET_VIEW', { view: 'precip' }]
     ])
   })
 
