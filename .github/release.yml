@@ -1,0 +1,32 @@
+# Configuration for GitHub's automatically generated release notes.
+# Applied whenever a Release is created from a tag — PRs merged since the
+# previous tag are grouped into the categories below by label.
+# https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes
+changelog:
+  exclude:
+    labels:
+      - duplicate
+      - invalid
+      - question
+      - wontfix
+  categories:
+    - title: Features
+      labels:
+        - enhancement
+        - feat
+        - feature
+    - title: Bug Fixes
+      labels:
+        - bug
+        - fix
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+    - title: Maintenance
+      labels:
+        - chore
+        - ci
+        - dependencies
+        - style
+        - test
